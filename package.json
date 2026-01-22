@@ -1,0 +1,57 @@
+{
+	"name": "@drawline/core",
+	"version": "0.1.0",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"exports": {
+		".": "./dist/index.js",
+		"./server": "./dist/server.js",
+		"./worker": "./dist/generator/worker.cjs"
+	},
+	"license": "MIT",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"dependencies": {
+		"@aws-sdk/client-dynamodb": "^3.954.0",
+		"@aws-sdk/lib-dynamodb": "^3.954.0",
+		"@faker-js/faker": "^10.1.0",
+		"firebase-admin": "^13.6.0",
+		"mongodb": "^7.0.0",
+		"pg": "^8.16.3",
+		"seedrandom": "^3.0.5",
+		"zod": "^4.1.12"
+	},
+	"devDependencies": {
+		"@types/pg": "^8.16.0",
+		"@types/seedrandom": "^3.0.8",
+		"typescript": "5.9.3",
+		"vitest": "^4.0.17"
+	},
+	"description": "Core logic and utilities for Drawline",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/solvaratech/drawline-core.git"
+	},
+	"keywords": [
+		"drawline",
+		"core",
+		"schema",
+		"generator",
+		"database"
+	],
+	"bugs": {
+		"url": "https://github.com/solvaratech/drawline-core/issues"
+	},
+	"homepage": "https://github.com/solvaratech/drawline-core#readme",
+	"publishConfig": {
+		"access": "public"
+	}
+}
