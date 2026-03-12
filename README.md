@@ -6,11 +6,12 @@ This package provides a unified interface to interact with multiple database typ
 
 ## Features
 
-- **Multi-Database Support**: Unified adapter interface for PostgreSQL, MongoDB, and Firestore.
+- **Multi-Database Support**: Unified adapter interface for PostgreSQL, MongoDB, Firestore, and a mock **InMemoryAdapter** for testing.
 - **Schema Inference**: Automatically extracts collection structures, fields, types, and constraints.
 - **Relationship Detection**: Heuristic-based detection of foreign key relationships between collections.
 - **Smart Data Generator**: topologically sorts collections based on dependencies to generate data in the correct order, ensuring foreign key integrity.
 - **Type-Safe Schemas**: Comprehensive TypeScript definitions for defining database schemas abstractly.
+- **CLI Tool**: A powerful command-line interface for data generation, schema validation, and project initialization.
 
 ## Installation
 
@@ -189,3 +190,52 @@ interface TestDataConfig {
   }) => Promise<void>;
 }
 ```
+
+## CLI Tool
+
+The package includes a CLI tool to interact with the engine.
+
+### Installation
+
+Link the CLI locally:
+```bash
+npm run cli:build
+npm link
+```
+
+### Commands
+
+- **`init`**: Create a sample `schema.json` and `drawline.config.json`.
+  ```bash
+  drawline init
+  ```
+- **`gen`**: Generate data based on schema and config.
+  ```bash
+  drawline gen --schema schema.json --config drawline.config.json --db in-memory
+  ```
+- **`validate`**: Validate a schema file.
+  ```bash
+  drawline validate --schema schema.json
+  ```
+
+## Development and Testing
+
+### Testing Environment
+
+We use **Vitest** for unit testing. The project includes an `InMemoryAdapter` that allows you to test relationship logic and data generation without a real database.
+
+### Running Tests
+
+```bash
+npm test
+```
+
+To run tests in watch mode:
+```bash
+npm run test:watch
+```
+
+### Adding New Adapters
+
+All new adapters must extend `BaseAdapter` and implement the abstract methods for connection management and document insertion. Reference `InMemoryAdapter.ts` for a simple starting point.
+

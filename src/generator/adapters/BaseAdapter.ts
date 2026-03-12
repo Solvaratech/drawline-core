@@ -70,11 +70,11 @@ export abstract class BaseAdapter {
 	 * Default uses the generic DependencyGraph class.
 	 * PostgreSQL adapter can override to use actual FK constraints from the database.
 	 */
-	buildDependencyOrder(
+	async buildDependencyOrder(
 		collections: SchemaCollection[],
 		relationships: SchemaRelationship[]
-	): SchemaCollection[] {
-		const { DependencyGraph } = require("../core/DependencyGraph");
+	): Promise<SchemaCollection[]> {
+		const { DependencyGraph } = await import("../core/DependencyGraph");
 		const graph = new DependencyGraph(collections, relationships);
 		return graph.getGenerationOrder();
 	}

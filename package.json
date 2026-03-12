@@ -3,6 +3,9 @@
 	"version": "0.1.0",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"bin": {
+		"drawline": "./dist/cli.js"
+	},
 	"files": [
 		"dist"
 	],
@@ -17,12 +20,15 @@
 		"dev": "tsc --watch",
 		"type-check": "tsc --noEmit",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"cli:build": "tsc && chmod +x dist/cli.js"
 	},
 	"dependencies": {
 		"@aws-sdk/client-dynamodb": "^3.954.0",
 		"@aws-sdk/lib-dynamodb": "^3.954.0",
 		"@faker-js/faker": "^10.1.0",
+		"chalk": "^5.6.2",
+		"commander": "^14.0.3",
 		"firebase-admin": "^13.6.0",
 		"mongodb": "^7.0.0",
 		"pg": "^8.16.3",
@@ -30,6 +36,7 @@
 		"zod": "^4.1.12"
 	},
 	"devDependencies": {
+		"@types/commander": "^2.12.0",
 		"@types/pg": "^8.16.0",
 		"@types/seedrandom": "^3.0.8",
 		"typescript": "5.9.3",

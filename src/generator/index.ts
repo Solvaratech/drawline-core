@@ -110,7 +110,7 @@ export class TestDataGeneratorService {
 			);
 
 			// Dependency Analysis
-			const generationOrder = this.adapter.buildDependencyOrder(
+			const generationOrder = await this.adapter.buildDependencyOrder(
 				filteredCollections,
 				filteredRelationships
 			);

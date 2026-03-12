@@ -1163,10 +1163,10 @@ export class PostgresAdapter extends BaseAdapter {
 	}
 
 	// PostgreSQL-specific dependency ordering using actual FK constraints.
-	buildDependencyOrder(
+	async buildDependencyOrder(
 		collections: SchemaCollection[],
 		relationships: SchemaRelationship[]
-	): SchemaCollection[] {
+	): Promise<SchemaCollection[]> {
 		const collectionMap = new Map<string, SchemaCollection>();
 		const collectionIdToName = new Map<string, string>();
 		for (const col of collections) {
