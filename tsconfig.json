@@ -14,7 +14,7 @@
 		"declarationMap": true,
 		"noEmit": false
 	},
-	"include": [
-		"src/**/*"
-, "scratch.ts"	]
+	"include": [ 
+		"src/**/*" 
+	]
 }
