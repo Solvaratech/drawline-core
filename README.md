@@ -13,6 +13,16 @@ This package provides a unified interface to interact with multiple database typ
 - **Type-Safe Schemas**: Comprehensive TypeScript definitions for defining database schemas abstractly.
 - **CLI Tool**: A powerful command-line interface for data generation, schema validation, and project initialization.
 
+## Tech Stack
+
+- **Language:** Node.js / TypeScript
+- **Databases Supported:** PostgreSQL (`pg`), MongoDB (`mongodb`), Firestore (`firebase-admin`), DynamoDB (`@aws-sdk/client-dynamodb`)
+- **Core Libraries:**
+  - **Schema Validation:** [Zod](https://zod.dev/)
+  - **Data Generation:** [@faker-js/faker](https://fakerjs.dev/) & [seedrandom](https://github.com/davidbau/seedrandom) for deterministic values
+  - **CLI:** [Commander](https://github.com/tj/commander.js) & [Chalk](https://github.com/chalk/chalk)
+- **Testing:** [Vitest](https://vitest.dev/)
+
 ## Installation
 
 ```bash
