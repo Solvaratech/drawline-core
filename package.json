@@ -23,6 +23,7 @@
 		"test:ui": "vitest --ui",
 		"test:watch": "vitest",
 		"test:ci": "vitest run --coverage",
+		"test:e2e": "vitest run src/tests/e2e.test.ts",
 		"cli:build": "tsc && chmod +x dist/cli.js"
 	},
 	"dependencies": {
