@@ -109,4 +109,90 @@ describe("TestDataGeneratorService with InMemoryAdapter", () => {
 			expect(userIds).toContain(post.userId);
 		});
 	});
+
+	it("should throw for unsupported adapter type", () => {
+		expect(() => {
+			TestDataGeneratorService.createAdapter("mysql" as any, "secret", (s) => s);
+		}).toThrowError("Unsupported database type");
+	});
+
+	it("should auto-resolve missing target primary keys in relationships", async () => {
+		const collections: SchemaCollection[] = [
+			{
+				id: "users_no_pk", // No explicit primary key
+				name: "users_no_pk",
+				fields: [
+					{ id: "u2", name: "name", type: "string" } // "id" field missing, should be auto-appended by InMemoryAdapter or gracefully handled
+				],
+				position: { x: 0, y: 0 }
+			},
+			{
+				id: "posts",
+				name: "posts",
+				fields: [
+					{ id: "p2", name: "title", type: "string" }
+					// no userId field initially, should be injected
+				],
+				position: { x: 100, y: 100 }
+			}
+		];
+
+		const relationships: SchemaRelationship[] = [
+			{
+				id: "r1",
+				fromCollectionId: "posts",
+				toCollectionId: "users_no_pk",
+				fromField: "userId",
+				type: "many-to-one"
+				// No toField provided
+			}
+		];
+
+		const config: TestDataConfig = {
+			collections: [
+				{ collectionName: "users_no_pk", count: 1 },
+				{ collectionName: "posts", count: 1 }
+			],
+			relationships: []
+		};
+
+		const result = await service.generateAndPopulate(collections, relationships, config);
+		expect(result.success).toBe(true);
+
+		const postData = adapter.getData("posts");
+		expect(postData[0]).toHaveProperty("userId");
+		
+		// It creates a warning for missing primary key defaulting to 'id'
+		expect(result.warnings?.some(w => w.includes("No primary key found"))).toBe(true);
+	});
+
+	it("should catch errors from adapter during collection mapping", async () => {
+		const collections: SchemaCollection[] = [
+			{
+				id: "bad_collection",
+				name: "bad_collection",
+				fields: [],
+				position: { x:0, y:0 }
+			}
+		];
+
+		const config: TestDataConfig = {
+			collections: [{ collectionName: "bad_collection", count: 5 }],
+			relationships: []
+		};
+
+		// Mock adapter throwing
+		const originalGenerate = adapter.generateCollectionData;
+		adapter.generateCollectionData = async () => {
+			throw new Error("Simulated generator failure");
+		};
+
+		const result = await service.generateAndPopulate(collections, [], config);
+		
+		expect(result.success).toBe(false);
+		expect(result.totalDocumentsGenerated).toBe(0);
+		expect(result.errors?.[0]).toContain("Simulated generator failure");
+		
+		adapter.generateCollectionData = originalGenerate;
+	});
 });

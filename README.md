@@ -31,16 +31,56 @@ npm install @drawline/core
 
 ## Core Architecture
 
-The engine is built around a few key concepts:
+The engine is built around a few key concepts, orchestrated to allow platform-agnostic schema analysis and deterministic data generation:
+
+```mermaid
+graph TD
+    A[Drawline UI / CLI] -->|Provides Schema & Config| B(TestDataGeneratorService)
+    B -->|Analyzes Dependencies| C{Generation DAG}
+    C -->|Order sequence| D[Database Adapter Interface]
+    D -->|PostgreSQL| E[(PostgreSQL DB)]
+    D -->|MongoDB| F[(MongoDB)]
+    D -->|Mock| G[(InMemory / Test)]
+```
 
 ### 1. Adapters (`BaseAdapter`)
-The `BaseAdapter` abstract class defines the contract for all database interactions. Each supported database has a concrete implementation (e.g., `PostgresAdapter`, `MongoDBAdapter`) that handles the specifics of connection, querying, and insertion.
+The `BaseAdapter` abstract class defines the contract for all database interactions. Each supported database has a concrete implementation (e.g., `PostgresAdapter`, `MongoDBAdapter`) that handles the specifics of connection, querying, schema resolving, and insertion.
 
 ### 2. Schema Inference
 The engine can inspect a live database to construct a platform-agnostic `SchemaDesign` object. This object represents the database structure in a way that Drawline's UI and generator can understand, normalizing types (e.g., mapping `varchar` and `String` to a unified `string` type).
 
 ### 3. Test Data Generator (`TestDataGeneratorService`)
-This is the heart of the seeding functionality. When you request data generation, the service:
+This is the heart of the seeding functionality. The generation pipeline follows a strict sequence:
+
+```mermaid
+sequenceDiagram
+    participant User as Consumer
+    participant Gen as TestDataGeneratorService
+    participant Adapter as Database Adapter
+    participant DB as Target Database
+    
+    User->>Gen: generateAndPopulate(schema, config)
+    activate Gen
+    Gen->>Adapter: buildDependencyOrder()
+    Adapter-->>Gen: Topological DAG Order
+    
+    Note over Gen,Adapter: Phase 1: Ensure Schema
+    Gen->>Adapter: ensureCollection()
+    Adapter->>DB: CREATE TABLE / INDEX
+    
+    Note over Gen,Adapter: Phase 2: Generate & Insert
+    Gen->>Adapter: generateCollectionData()
+    Adapter->>DB: INSERT BATCH
+    
+    Note over Gen,Adapter: Phase 3: Apply Constraints
+    Gen->>Adapter: addForeignKeyConstraints()
+    Adapter->>DB: ALTER TABLE ADD CONSTRAINT
+    
+    Gen-->>User: GenerationResult
+    deactivate Gen
+```
+
+When you request data generation, the service:
 1.  **Analyzes Dependencies**: Builds a directed acyclic graph (DAG) of your collections based on defined relationships.
 2.  **Determines Order**: Resolves the correct insertion order (e.g., create `Users` before `Posts`).
 3.  **Generates Data**: Uses the schema constraints (types, enums, patterns) to create realistic mock data.
@@ -52,7 +92,7 @@ Drawline uses a sophisticated math-based approach to ensure data consistency wit
 
 *   **Deterministic IDs**: IDs are generated using a stable hash of `(Seed + Collection Name + Index)`.
 *   **Referential Integrity**: When generating a child record (e.g., `Order #500` linked to `User`), the engine calculates *exactly* which User ID was generated for `User #5`, ensuring the Foreign Key matches the Primary Key of the parent, even if they were generated in parallel or different batches.
-*   **Stateless**: The engine does not need to query the database to know that "User 5" exists; the math guarantees the IDs will match.
+*   **Stateless**: The engine does not need to query the database to know that "User 5" exists; the math guarantees the IDs will match exactly without db queries.
 
 ## Usage
 
@@ -232,18 +272,29 @@ npm link
 
 ### Testing Environment
 
-We use **Vitest** for unit testing. The project includes an `InMemoryAdapter` that allows you to test relationship logic and data generation without a real database.
+We use **Vitest** for a fast and robust unit testing experience. The test suite covers the core engine's data generation edge cases, foreign key resolutions, and schema relational mapping. Tests can be found in the `src/**/*.test.ts` files alongside their implementations.
 
 ### Running Tests
 
-```bash
-npm test
-```
+- **Run all tests**:
+  ```bash
+  npm test
+  ```
+- **Run tests in watch mode** (for active development):
+  ```bash
+  npm run test:watch
+  ```
+- **Launch the Vitest UI** (browser-based testing and visualization):
+  ```bash
+  npm run test:ui
+  ```
+- **Run tests with coverage** (used by CI):
+  ```bash
+  npm run test:ci
+  ```
 
-To run tests in watch mode:
-```bash
-npm run test:watch
-```
+### Continuous Integration (CI)
+All Pull Requests and commits to `main` are automatically validated via GitHub Actions. The CI pipeline strictly enforces TypeScript compilation (`npm run type-check`) and executes the full test suite with coverage. Please ensure your local tests pass before opening a PR.
 
 ### Adding New Adapters
 
