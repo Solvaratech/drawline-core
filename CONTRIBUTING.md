@@ -33,7 +33,7 @@ Thank you for your interest in contributing to Drawline Core! We welcome contrib
     ```bash
     git push origin feature/amazing-feature
     ```
-4.  Open a Pull Request on the main repository.
+4.  Open a Pull Request targeting the `dev` branch on the main repository. (Do not open PRs directly against `main`).
 5.  **Verify CI Actions**: Ensure that your Pull Request passes the automated GitHub Actions CI. This pipeline verifies type-safety (`npm run type-check`) and executes the test suite (`npm run test:ci`).
 
 ## Code Style
