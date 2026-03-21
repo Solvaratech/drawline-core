@@ -1,4 +1,4 @@
-# Contributing to @drawline/core
+# Contributing to @solvaratech/drawline-core
 
 Thank you for your interest in contributing to Drawline Core! We welcome contributions from the community.
 
