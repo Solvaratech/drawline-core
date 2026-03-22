@@ -30,6 +30,7 @@
 		"@aws-sdk/client-dynamodb": "^3.954.0",
 		"@aws-sdk/lib-dynamodb": "^3.954.0",
 		"@faker-js/faker": "^10.1.0",
+		"better-sqlite3": "^12.6.2",
 		"chalk": "^5.6.2",
 		"commander": "^14.0.3",
 		"firebase-admin": "^13.6.0",
@@ -39,6 +40,7 @@
 		"zod": "^4.1.12"
 	},
 	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.13",
 		"@types/commander": "^2.12.0",
 		"@types/pg": "^8.16.0",
 		"@types/seedrandom": "^3.0.8",

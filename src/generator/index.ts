@@ -7,7 +7,13 @@ import {
 import { MongoDBAdapter } from "./adapters/MongoDBAdapter";
 import { FirestoreAdapter } from "./adapters/FirestoreAdapter";
 import { PostgresAdapter } from "./adapters/PostgresAdapter";
+import { SQLiteAdapter } from "./adapters/SQLiteAdapter";
+import { CSVExportAdapter } from "./adapters/CSVExportAdapter";
+import { EphemeralAdapter } from "./adapters/EphemeralAdapter";
 import { BaseAdapter } from "./adapters/BaseAdapter"; // Class
+export { CSVExportAdapter } from "./adapters/CSVExportAdapter";
+export { SQLiteAdapter } from "./adapters/SQLiteAdapter";
+export { EphemeralAdapter } from "./adapters/EphemeralAdapter";
 import { logger } from "../utils";
 import type {
   TestDataConfig,
@@ -46,6 +52,10 @@ export class TestDataGeneratorService {
       }
       case "firestore":
         return new FirestoreAdapter(encryptedCredentials, decryptFn);
+      case "sqlite":
+        return new SQLiteAdapter(decryptFn(encryptedCredentials));
+      case "csv":
+        return new CSVExportAdapter(decryptFn(encryptedCredentials));
       default:
         throw new Error(`Unsupported database type for generation: ${type}`);
     }
