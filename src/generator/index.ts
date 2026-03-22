@@ -14,6 +14,7 @@ import { BaseAdapter } from "./adapters/BaseAdapter"; // Class
 export { CSVExportAdapter } from "./adapters/CSVExportAdapter";
 export { SQLiteAdapter } from "./adapters/SQLiteAdapter";
 export { EphemeralAdapter } from "./adapters/EphemeralAdapter";
+export { DependencyGraph } from "./core/DependencyGraph";
 import { logger } from "../utils";
 import type {
   TestDataConfig,
