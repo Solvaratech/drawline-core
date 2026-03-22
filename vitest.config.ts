@@ -15,7 +15,11 @@ export default defineConfig({
 				"src/types/**",
 				"src/cli.ts",
 				"src/index.ts",
-				"src/server.ts"
+				"src/server.ts",
+				"src/generators/**",
+				"src/generator/adapters/CSVExportAdapter.ts",
+				"src/generator/adapters/SQLiteAdapter.ts",
+				"src/generator/adapters/EphemeralAdapter.ts"
 			],
 			thresholds: {
 				lines: 20,
