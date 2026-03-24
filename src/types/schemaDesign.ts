@@ -2,7 +2,7 @@
  * Types for the Schema Designer.
  */
 
-export const DATABASE_TYPES = ["mongodb", "postgresql", "firestore"] as const;
+export const DATABASE_TYPES = ["mongodb", "postgresql", "firestore", "sqlite", "csv"] as const;
 export type DatabaseType = typeof DATABASE_TYPES[number];
 
 export type FieldType =

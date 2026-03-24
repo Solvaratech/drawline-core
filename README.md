@@ -1,4 +1,4 @@
-# @drawline/core
+# @solvaratech/drawline-core
 
 The core engine behind Drawline, responsible for database connection management, schema inference, and intelligent test data generation.
 
@@ -26,7 +26,7 @@ This package provides a unified interface to interact with multiple database typ
 ## Installation
 
 ```bash
-npm install @drawline/core
+npm install @solvaratech/drawline-core
 ```
 
 ## Core Architecture
@@ -101,7 +101,7 @@ Drawline uses a sophisticated math-based approach to ensure data consistency wit
 Use the `createHandler` factory or `TestDataGeneratorService` to instantiate the correct adapter.
 
 ```typescript
-import { createHandler, DatabaseType } from "@drawline/core/server";
+import { createHandler, DatabaseType } from "@solvaratech/drawline-core/server";
 
 const type: DatabaseType = "postgresql";
 const credentials = "postgres://user:pass@localhost:5432/mydb";
@@ -119,7 +119,7 @@ await handler.disconnect();
 To generate data, you must provide a **Schema Definition** and a **Configuration**. This is typically constructed by the frontend, but here is how the engine expects it.
 
 ```typescript
-import { TestDataGeneratorService, TestDataConfig } from "@drawline/core/server";
+import { TestDataGeneratorService, TestDataConfig } from "@solvaratech/drawline-core/server";
 
 // 1. Initialize Service
 const service = new TestDataGeneratorService(handler);

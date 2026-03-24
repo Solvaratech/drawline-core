@@ -1,4 +1,4 @@
-# Contributing to @drawline/core
+# Contributing to @solvaratech/drawline-core
 
 Thank you for your interest in contributing to Drawline Core! We welcome contributions from the community.
 
@@ -35,6 +35,14 @@ Thank you for your interest in contributing to Drawline Core! We welcome contrib
     ```
 4.  Open a Pull Request targeting the `dev` branch on the main repository. (Do not open PRs directly against `main`).
 5.  **Verify CI Actions**: Ensure that your Pull Request passes the automated GitHub Actions CI. This pipeline verifies type-safety (`npm run type-check`) and executes the test suite (`npm run test:ci`).
+
+## Testing for Maintainers
+
+If you are reviewing a Pull Request or verifying core changes, you can use the End-to-End (E2E) test suite to quickly validate the primary product proposition.
+
+-   **Run the E2E verification**: `npm run test:e2e`
+
+This suite simulates a full run through the system: parsing schema definitions, resolving relationships, generating synthetic data, and verifying the output structure. If this passes, the core logic is healthy.
 
 ## Code Style
 
