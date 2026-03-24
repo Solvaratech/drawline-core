@@ -112,7 +112,7 @@ describe("TestDataGeneratorService with InMemoryAdapter", () => {
 
 	it("should throw for unsupported adapter type", () => {
 		expect(() => {
-			TestDataGeneratorService.createAdapter("mysql" as any, "secret", (s) => s);
+			TestDataGeneratorService.createAdapter("oracle" as any, "secret", (s) => s);
 		}).toThrowError("Unsupported database type");
 	});
 

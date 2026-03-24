@@ -8,6 +8,7 @@ import { MongoDBAdapter } from "./adapters/MongoDBAdapter";
 import { FirestoreAdapter } from "./adapters/FirestoreAdapter";
 import { PostgresAdapter } from "./adapters/PostgresAdapter";
 import { SQLiteAdapter } from "./adapters/SQLiteAdapter";
+import { MySQLAdapter } from "./adapters/MySQLAdapter";
 import { CSVExportAdapter } from "./adapters/CSVExportAdapter";
 import { EphemeralAdapter } from "./adapters/EphemeralAdapter";
 import { BaseAdapter } from "./adapters/BaseAdapter"; // Class
@@ -54,7 +55,9 @@ export class TestDataGeneratorService {
       case "firestore":
         return new FirestoreAdapter(encryptedCredentials, decryptFn);
       case "sqlite":
-        return new SQLiteAdapter(decryptFn(encryptedCredentials));
+        return new SQLiteAdapter();
+      case "mysql":
+        return new MySQLAdapter(decryptFn(encryptedCredentials));
       case "csv":
         return new CSVExportAdapter(decryptFn(encryptedCredentials));
       default:
