@@ -29,7 +29,7 @@ describe('MySQLAdapter', () => {
     };
     (mysql.createConnection as any).mockResolvedValue(mockConnection);
 
-    adapter = new MySQLAdapter();
+    adapter = new MySQLAdapter({ host: 'localhost' });
     await adapter.connect({
       host: 'mock_host',
       user: 'mock_user',
@@ -70,7 +70,7 @@ describe('MySQLAdapter', () => {
   });
 
   it('should throw an error if not connected', async () => {
-    const disconnectedAdapter = new MySQLAdapter();
+    const disconnectedAdapter = new MySQLAdapter({ host: 'localhost' });
     await expect(disconnectedAdapter.getCollections()).rejects.toThrow('Not connected');
   });
 
@@ -94,7 +94,7 @@ describe('MySQLAdapter', () => {
   });
 
   it('should throw an error if not connected when calling getDocumentCount', async () => {
-    const disconnectedAdapter = new MySQLAdapter();
+    const disconnectedAdapter = new MySQLAdapter({ host: 'localhost' });
     await expect(disconnectedAdapter.getDocumentCount('test_table')).rejects.toThrow('Not connected to MySQL');
   });
 
@@ -122,7 +122,7 @@ describe('MySQLAdapter', () => {
   });
 
   it('should handle connection failures', async () => {
-    const errorAdapter = new MySQLAdapter();
+    const errorAdapter = new MySQLAdapter({ host: 'localhost' });
     (mysql.createConnection as any).mockRejectedValueOnce(new Error('Connection failed'));
 
     await expect(errorAdapter.connect({ host: 'localhost', user: 'root', database: 'test' })).rejects.toThrow('Connection failed');

@@ -14,6 +14,12 @@ interface LocalCollectionDetails {
 
 export class MySQLAdapter extends BaseAdapter {
   private connection: mysql.Connection | null = null;
+  private config: mysql.ConnectionOptions | string;
+
+  constructor(config: mysql.ConnectionOptions | string) {
+    super();
+    this.config = config;
+  }
 
   private escapeIdentifier(id: string): string {
     const escaped = '`' + id.replace(/`/g, '``') + '`';
@@ -22,9 +28,10 @@ export class MySQLAdapter extends BaseAdapter {
   }
 
   async connect(config?: mysql.ConnectionOptions): Promise<void> {
-    if (!config) throw new Error('Connection config is required');
+    const finalConfig = config || this.config;
+    if (!finalConfig) throw new Error('Connection config is required');
     try {
-      this.connection = await mysql.createConnection(config);
+      this.connection = await mysql.createConnection(finalConfig as any);
       console.log("Connection established successfully.");
     } catch (error) {
       console.error("Error in connect:", error);
