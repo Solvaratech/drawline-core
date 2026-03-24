@@ -1,350 +1,254 @@
-import { BaseAdapter, CollectionDetails } from "./BaseAdapter";
-import { GeneratedDocument } from "../types";
-import { SchemaField } from "../../types/schemaDesign";
-// @ts-ignore - types might not be installed yet during generation
-import Database from "better-sqlite3";
-import fs from "fs";
-import path from "path";
+import Database from 'better-sqlite3';
+import { BaseAdapter, CollectionDetails } from './BaseAdapter';
+import type { SchemaField } from '../../types/schemaDesign';
 
 export class SQLiteAdapter extends BaseAdapter {
-	private db: Database.Database | null = null;
-	private dbPath: string;
+  private db: Database.Database | null = null;
 
-	constructor(dbPath: string) {
-		super();
-		this.dbPath = dbPath;
-	}
+  // SQLite uses double quotes for schema identifiers
+  private escapeIdentifier(id: string): string {
+    return '"' + id.replace(/"/g, '""') + '"';
+  }
 
-	async connect(): Promise<void> {
-		if (this.db) return;
+  async connect(config?: { filename?: string }): Promise<void> {
+    const filename = config?.filename || ':memory:';
+    try {
+      this.db = new Database(filename);
+    } catch (error: any) {
+      throw new Error(`Failed to connect to SQLite: ${error.message}`);
+    }
+  }
 
-		const dir = path.dirname(this.dbPath);
-		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
-		}
+  async disconnect(): Promise<void> {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+  }
 
-		this.db = new Database(this.dbPath);
-		this.db.pragma("journal_mode = WAL");
-	}
+  async getCollections(): Promise<string[]> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    const stmt = this.db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name NOT LIKE 'sqlite_%'
+    `);
+    const rows = stmt.all() as { name: string }[];
+    return rows.map((row) => row.name);
+  }
 
-	async disconnect(): Promise<void> {
-		if (this.db) {
-			this.db.close();
-			this.db = null;
-		}
-	}
+  async collectionExists(collection: string): Promise<boolean> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    const stmt = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`);
+    const row = stmt.get(collection);
+    return !!row;
+  }
 
-	async ensureCollection(
-		collectionName: string,
-		schema?: SchemaField[],
-		skipForeignKeys?: boolean
-	): Promise<void> {
-		if (!this.db || !schema) return;
+  async getDocumentCount(collection: string): Promise<number> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    if (!(await this.collectionExists(collection))) {
+      throw new Error("Table does not exist");
+    }
 
-		const tableName = this.escapeId(collectionName);
-		const columns = schema
-			// We DO want to include foreign keys and references because they hold data (the ID of the referenced doc)
-			// effectively acting as the column for that field.
-			.filter((f) => {
-				// Filter out reversed relationships (e.g. "users" having "posts" array if it's virtual)
-				// usually 'reference' type implies a direct FK column.
-				// If type is 'array' and it's a relationship, it might be a virtual reverse link.
-				if (f.type === 'array' || (f.type as string) === 'list') {
-					// Check if it's a Many-to-Many or One-to-Many virtual
-					// For now, let's include it if it's not explicitly virtual? 
-					// But arrays of references might be stored as JSON text, so that's fine too.
-					return true;
-				}
-				return true;
-			})
-			.map((f) => {
-				const name = this.escapeId(f.name);
-				const type = this.getSqlType(f);
-				let def = `${name} ${type}`;
-				if (f.isPrimaryKey) {
-					def += " PRIMARY KEY";
-				}
-				return def;
-			});
+    const escapedCollection = this.escapeIdentifier(collection);
+    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM ${escapedCollection}`);
+    const result = stmt.get() as { count: number };
+    return result.count;
+  }
 
-		const hasUnderscoreId = schema.some(f => f.name === '_id');
-		if (!hasUnderscoreId && !schema.some(f => f.isPrimaryKey) && !columns.some(c => c.toUpperCase().includes('PRIMARY KEY'))) {
-			columns.unshift('"id" TEXT PRIMARY KEY');
-		}
+  async insertDocuments(
+    collectionName: string,
+    documents: Record<string, any>[],
+    batchSize?: number,
+    allowedReferenceFields?: Set<string>,
+    schema?: SchemaField[],
+  ): Promise<(string | number)[]> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    if (!documents || documents.length === 0) return [];
+    if (!(await this.collectionExists(collectionName))) {
+      throw new Error("Table does not exist");
+    }
 
-		const fkFields = schema.filter(f => f.isForeignKey);
-		for (const fk of fkFields) {
-			const name = this.escapeId(fk.name);
-			// Check if already added (unlikely if loop above filtered)
-			if (!columns.some(c => c.startsWith(`${name} `))) {
-				// Use proper type based on field type for FK columns
-				const type = this.getSqlType(fk);
-				columns.push(`${name} ${type}`);
-			}
-		}
+    const escapedCollection = this.escapeIdentifier(collectionName);
+    const keys = Object.keys(documents[0]);
+    const columns = keys.map(this.escapeIdentifier).join(", ");
+    const placeholders = keys.map(() => "?").join(", ");
+    
+    // Use a transaction for bulk inserts ensuring speed & safety
+    const insertMany = this.db.transaction((docs: Record<string, any>[]) => {
+      const stmt = this.db!.prepare(`INSERT INTO ${escapedCollection} (${columns}) VALUES (${placeholders})`);
+      const ids: (string | number)[] = [];
+      for (const doc of docs) {
+        const values = keys.map(k => doc[k]);
+        const info = stmt.run(values);
+        ids.push(Number(info.lastInsertRowid));
+      }
+      return ids;
+    });
 
-		const createSql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(", ")});`;
-		this.db.prepare(createSql).run();
-	}
+    try {
+      return insertMany(documents);
+    } catch (error: any) {
+      throw new Error(`Failed to insert documents: ${error.message}`);
+    }
+  }
 
-	async insertDocuments(
-		collectionName: string,
-		documents: GeneratedDocument[],
-		batchSize?: number,
-		allowedReferenceFields?: Set<string>,
-		schema?: SchemaField[]
-	): Promise<(string | number)[]> {
-		if (!this.db || documents.length === 0) return [];
+  async ensureCollection(collectionName: string, schema: SchemaField[]): Promise<void> {
+    if (!this.db) throw new Error("Not connected to SQLite");
 
-		const tableName = this.escapeId(collectionName);
-		const ids: (string | number)[] = [];
+    const escapedCollectionName = this.escapeIdentifier(collectionName);
+    const columns = schema.map((field) => {
+      const escapedField = this.escapeIdentifier(field.name);
+      
+      // Map generic types to SQLite types
+      let type = "TEXT";
+      if (field.rawType) {
+        type = field.rawType;
+      } else if (field.type === "number") {
+        type = "REAL";
+      } else if (field.type === "boolean") {
+        type = "INTEGER"; // SQLite uses 0/1 for booleans
+      }
 
-		const insertTransaction = this.db.transaction((docs: GeneratedDocument[]) => {
-			// Pre-calculate valid columns if schema provided
-			let validColumns: Set<string> | null = null;
-			if (schema) {
-				validColumns = new Set(schema.map(f => f.name));
+      const constraints = [
+        field.isPrimaryKey ? "PRIMARY KEY" : "",
+        field.required ? "NOT NULL" : "",
+        field.defaultValue !== undefined ? `DEFAULT '${String(field.defaultValue).replace(/'/g, "''")}'` : "",
+      ].filter(Boolean).join(" ");
+      
+      return `${escapedField} ${type} ${constraints}`;
+    });
 
-				// Handle implicit 'id' logic mirroring ensureCollection
-				const hasUnderscoreId = schema.some(f => f.name === '_id');
-				const hasPk = schema.some(f => f.isPrimaryKey);
-				// If no PK and no _id, ensureCollection adds 'id'
-				if (!hasUnderscoreId && !hasPk) {
-					validColumns.add('id');
-				}
-				// Also add 'id' if schema explicitly has it (already in map) 
-			}
+    const fkConstraints: string[] = [];
+    
+    // Single foreign keys
+    const singleFKs = schema.filter(f => f.isForeignKey && f.referencedCollectionId && !f.compositeKeyGroup);
+    for (const field of singleFKs) {
+      const escapedField = this.escapeIdentifier(field.name);
+      const escapedRefTable = this.escapeIdentifier(field.referencedCollectionId!);
+      const escapedRefField = this.escapeIdentifier(field.foreignKeyTarget || 'id');
+      fkConstraints.push(`FOREIGN KEY (${escapedField}) REFERENCES ${escapedRefTable} (${escapedRefField})`);
+    }
 
-			for (const doc of docs) {
-				let keys = Object.keys(doc.data);
+    // Composite foreign keys
+    const compositeFKGroups = new Map<string, SchemaField[]>();
+    schema.filter(f => f.isForeignKey && f.referencedCollectionId && f.compositeKeyGroup).forEach(field => {
+      if (!compositeFKGroups.has(field.compositeKeyGroup!)) {
+        compositeFKGroups.set(field.compositeKeyGroup!, []);
+      }
+      compositeFKGroups.get(field.compositeKeyGroup!)!.push(field);
+    });
 
-				// Filter keys if schema is available
-				if (validColumns) {
-					keys = keys.filter(k => validColumns!.has(k));
-				}
+    // Generate constraints for composite groups
+    for (const fields of compositeFKGroups.values()) {
+      const escapedLocalFields = fields.map(f => this.escapeIdentifier(f.name)).join(', ');
+      const escapedRefTable = this.escapeIdentifier(fields[0].referencedCollectionId!);
+      const escapedRefFields = fields.map(f => this.escapeIdentifier(f.foreignKeyTarget || 'id')).join(', ');
+      fkConstraints.push(`FOREIGN KEY (${escapedLocalFields}) REFERENCES ${escapedRefTable} (${escapedRefFields})`);
+    }
 
-				if (keys.length === 0) continue;
+    // Combine standard columns and constraint definitions
+    const allDefs = [...columns, ...fkConstraints].join(", ");
 
-				const columns = keys.map((k) => this.escapeId(k)).join(", ");
-				const placeholders = keys.map(() => "?").join(", ");
-				const values = keys.map((k) => {
-					const val = doc.data[k];
-					if (val === undefined) return null;
-					if (typeof val === "boolean") return val ? 1 : 0;
-					if (typeof val === "object" && val !== null) {
-						return JSON.stringify(val);
-					}
-					return val;
-				});
+    const query = `CREATE TABLE IF NOT EXISTS ${escapedCollectionName} (${allDefs})`;
+    this.db.exec(query);
+  }
 
-				const stmt = this.db!.prepare(
-					`INSERT OR REPLACE INTO ${tableName} (${columns}) VALUES (${placeholders})`
-				);
-				stmt.run(...values);
-				ids.push(doc.id);
-			}
-		});
+  async clearCollection(collection: string): Promise<void> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    const escapedCollection = this.escapeIdentifier(collection);
+    try {
+      this.db.exec(`DELETE FROM ${escapedCollection}`);
+    } catch (error: any) {
+      if (!error.message.includes("no such table")) {
+        throw error;
+      }
+    }
+  }
 
-		insertTransaction(documents);
-		return ids;
-	}
+  async getCollectionDetails(collection: string): Promise<CollectionDetails> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    if (!(await this.collectionExists(collection))) {
+      throw new Error("Table does not exist");
+    }
 
-	async clearCollection(collectionName: string): Promise<void> {
-		if (!this.db) return;
-		this.db.prepare(`DELETE FROM ${this.escapeId(collectionName)}`).run();
-	}
+    const escapedCollection = this.escapeIdentifier(collection);
+    const stmt = this.db.prepare(`PRAGMA table_info(${escapedCollection})`);
+    const rows = stmt.all() as any[];
 
-	async collectionExists(collectionName: string): Promise<boolean> {
-		if (!this.db) return false;
-		const row = this.db
-			.prepare(
-				`SELECT name FROM sqlite_master WHERE type='table' AND name=?`
-			)
-			.get(collectionName);
-		return !!row;
-	}
+    const pkRows = rows.filter((r) => r.pk > 0).sort((a, b) => a.pk - b.pk);
 
-	async getCollectionDetails(collectionName: string): Promise<CollectionDetails> {
-		// Simplified for SQLite
-		return {
-			primaryKey: "id",
-			primaryKeyType: "string",
-		};
-	}
+    if (pkRows.length === 0) {
+      return {
+        primaryKey: "id",
+        primaryKeyType: "string",
+        isCompositePK: false
+      };
+    }
 
-	async getDocumentCount(collectionName: string): Promise<number> {
-		if (!this.db) return 0;
-		// Check if table exists first to avoid error
-		const exists = await this.collectionExists(collectionName);
-		if (!exists) return 0;
+    if (pkRows.length === 1) {
+      const typeStr = pkRows[0].type.toLowerCase();
+      let type: "string" | "integer" | "number" | "uuid" = "string";
+      if (typeStr.includes("int")) type = "integer";
+      else if (typeStr.includes("real") || typeStr.includes("numeric")) type = "number";
 
-		const result = this.db
-			.prepare(`SELECT COUNT(*) as count FROM ${this.escapeId(collectionName)}`)
-			.get() as { count: number };
-		return result.count;
-	}
+      return {
+        primaryKey: pkRows[0].name,
+        primaryKeyType: type,
+        isCompositePK: false
+      };
+    }
 
-	async validateReference(
-		collectionName: string,
-		fieldName: string,
-		value: unknown
-	): Promise<boolean> {
-		// TODO: Implement real FK validation if needed
-		return true;
-	}
+    return {
+      primaryKeys: pkRows.map(r => r.name),
+      primaryKeyTypes: pkRows.map(r => {
+        const typeStr = r.type.toLowerCase();
+        if (typeStr.includes("int")) return "integer";
+        if (typeStr.includes("real") || typeStr.includes("numeric")) return "number";
+        return "string";
+      }),
+      isCompositePK: true
+    };
+  }
 
-	async addForeignKeyConstraints(
-		collectionName: string,
-		schema: SchemaField[]
-	): Promise<void> {
-		// SQLite handles FKs if PRAGMA foreign_keys = ON;
-		// leaving as no-op for now to avoid strict constraint errors during prototyping
-	}
+  async getCollectionSchema(collection: string): Promise<SchemaField[]> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    if (!(await this.collectionExists(collection))) {
+      throw new Error("Table does not exist");
+    }
 
-	// Custom Methods for Stateful Mock API
+    const escapedCollection = this.escapeIdentifier(collection);
+    const stmt = this.db.prepare(`PRAGMA table_info(${escapedCollection})`);
+    const rows = stmt.all() as any[];
 
-	public getDocuments(collectionName: string, query: any = {}): GeneratedDocument[] {
-		if (!this.db) return [];
-		// Check if table exists first
-		const exists = this.db
-			.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
-			.get(collectionName);
-		if (!exists) return [];
+    return rows.map((row) => ({
+      id: row.name,
+      name: row.name,
+      type: "string", 
+      rawType: row.type,
+      nullable: row.notnull === 0,
+      defaultValue: row.dflt_value,
+      isPrimaryKey: row.pk > 0,
+    }));
+  }
 
-		// Basic query construction
-		let sql = `SELECT * FROM ${this.escapeId(collectionName)}`;
-		const whereClauses: string[] = [];
-		const params: any[] = [];
+  async validateReference(collectionName: string, fieldName: string, value: unknown): Promise<boolean> {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    const escapedCollectionName = this.escapeIdentifier(collectionName);
+    const escapedFieldName = this.escapeIdentifier(fieldName);
+    
+    // Fall back safely if table doesn't exist yet
+    if (!(await this.collectionExists(collectionName))) return false;
 
-		// Simple strict equality filtering
-		for (const [key, value] of Object.entries(query)) {
-			if (value !== undefined && key !== 'limit' && key !== 'sort' && key !== 'page') {
-				whereClauses.push(`${this.escapeId(key)} = ?`);
-				params.push(value);
-			}
-		}
+    const stmt = this.db.prepare(
+      `SELECT COUNT(*) as count FROM ${escapedCollectionName} WHERE ${escapedFieldName} = ?`
+    );
+    const result = stmt.get(value) as { count: number };
+    return result.count > 0;
+  }
 
-		if (whereClauses.length > 0) {
-			sql += ` WHERE ${whereClauses.join(' AND ')}`;
-		}
-
-
-		if (query.limit) {
-			sql += ` LIMIT ${parseInt(query.limit)}`;
-		}
-
-		if (query.skip || query.offset) {
-			const skip = parseInt(query.skip || query.offset);
-			if (!isNaN(skip)) {
-				sql += ` OFFSET ${skip}`;
-			}
-		} else if (query.page && query.limit) {
-			const page = parseInt(query.page);
-			const limit = parseInt(query.limit);
-			if (!isNaN(page) && !isNaN(limit) && page > 0) {
-				const offset = (page - 1) * limit;
-				sql += ` OFFSET ${offset}`;
-			}
-		}
-
-		const rows = this.db.prepare(sql).all(...params) as any[];
-
-		// Parse JSON fields if they look like JSON? 
-		// Or just return as is. The user usually expects correct validation.
-		// For now, return raw rows. 
-		// We need to map back to GeneratedDocument format
-		return rows.map((row) => ({
-			id: row.id,
-			data: this.parseRow(row),
-		}));
-	}
-
-	public deleteDocument(collectionName: string, id: string | number, schema?: SchemaField[]): boolean {
-		if (!this.db) return false;
-		const pkName = this.escapeId(this.getPrimaryKeyName(schema));
-		const info = this.db.prepare(`DELETE FROM ${this.escapeId(collectionName)} WHERE ${pkName} = ?`).run(id);
-		return info.changes > 0;
-	}
-
-	public updateDocument(collectionName: string, id: string | number, data: any, schema?: SchemaField[]): boolean {
-		if (!this.db) return false;
-
-		const pk = this.getPrimaryKeyName(schema);
-		let keys = Object.keys(data).filter(k => k !== pk && k !== 'id'); // Filter out PKs from set clause
-
-		// Filter using schema if provided
-		if (schema) {
-			const validColumns = new Set(schema.map(f => f.name));
-			keys = keys.filter(k => validColumns.has(k));
-		}
-
-		if (keys.length === 0) return false;
-
-		const sets = keys.map(k => `${this.escapeId(k)} = ?`).join(', ');
-		const values = keys.map(k => {
-			const val = data[k];
-			if (val === undefined) return null;
-			if (typeof val === "boolean") return val ? 1 : 0;
-			if (typeof val === "object" && val !== null) return JSON.stringify(val);
-			return val;
-		});
-		values.push(id);
-
-		const pkName = this.escapeId(pk);
-		const info = this.db.prepare(`UPDATE ${this.escapeId(collectionName)} SET ${sets} WHERE ${pkName} = ?`).run(...values);
-		return info.changes > 0;
-	}
-
-	private getPrimaryKeyName(schema?: SchemaField[]): string {
-		if (!schema) return 'id';
-		const pkField = schema.find(f => f.isPrimaryKey);
-		if (pkField) return pkField.name;
-		if (schema.some(f => f.name === '_id')) return '_id';
-		return 'id';
-	}
-
-	private escapeId(id: string): string {
-		return `"${id.replace(/"/g, '""')}"`;
-	}
-
-	private getSqlType(field: SchemaField): string {
-		switch (field.type) {
-			case "integer":
-			case "long":
-				return "INTEGER";
-			case "number":
-			case "float":
-			case "decimal":
-				return "REAL";
-			case "boolean":
-				return "INTEGER"; // 0 or 1
-			case "json":
-			case "array":
-			// @ts-ignore - 'list' might not be in type definition yet but used in schema
-			case "list":
-			case "object":
-			case "reference":
-			case "uuid":
-			case "objectid":
-				return "TEXT";
-			default:
-				return "TEXT";
-		}
-	}
-
-	private parseRow(row: any): any {
-		// Try to unparse JSON fields if possible or leave them
-		const newRow: any = { ...row };
-		for (const k in newRow) {
-			const val = newRow[k];
-			if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-				try {
-					newRow[k] = JSON.parse(val);
-				} catch (e) {
-					// ignore
-				}
-			}
-		}
-		return newRow;
-	}
+  async addForeignKeyConstraints(collectionName: string, schema: SchemaField[]): Promise<void> {
+    // SQLite does not support ALTER TABLE ADD CONSTRAINT for foreign keys.
+    // Therefore, in SQLiteAdapter, foreign keys are defined inline during table creation
+    // within ensureCollection(). This method safely no-ops.
+  }
 }
