@@ -43,10 +43,14 @@
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
 		"@types/commander": "^2.12.0",
+		"@types/ioredis": "^4.28.10",
 		"@types/pg": "^8.16.0",
 		"@types/seedrandom": "^3.0.8",
+		"@types/tedious": "^4.0.14",
 		"@vitest/coverage-v8": "^4.1.0",
 		"@vitest/ui": "^4.1.0",
+		"ioredis": "^5.10.1",
+		"tedious": "^19.2.1",
 		"typescript": "5.9.3",
 		"vitest": "^4.0.17"
 	},

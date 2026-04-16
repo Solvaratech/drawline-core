@@ -11,10 +11,16 @@ import { SQLiteAdapter } from "./adapters/SQLiteAdapter";
 import { MySQLAdapter } from "./adapters/MySQLAdapter";
 import { CSVExportAdapter } from "./adapters/CSVExportAdapter";
 import { EphemeralAdapter } from "./adapters/EphemeralAdapter";
+import { DynamoDBAdapter } from "./adapters/DynamoDBAdapter";
+import { SQLServerAdapter } from "./adapters/SQLServerAdapter";
+import { RedisAdapter } from "./adapters/RedisAdapter";
 import { BaseAdapter } from "./adapters/BaseAdapter"; // Class
 export { CSVExportAdapter } from "./adapters/CSVExportAdapter";
 export { SQLiteAdapter } from "./adapters/SQLiteAdapter";
 export { EphemeralAdapter } from "./adapters/EphemeralAdapter";
+export { DynamoDBAdapter } from "./adapters/DynamoDBAdapter";
+export { SQLServerAdapter } from "./adapters/SQLServerAdapter";
+export { RedisAdapter } from "./adapters/RedisAdapter";
 export { DependencyGraph } from "./core/DependencyGraph";
 import { logger } from "../utils";
 import type {
@@ -60,6 +66,18 @@ export class TestDataGeneratorService {
         return new MySQLAdapter(decryptFn(encryptedCredentials));
       case "csv":
         return new CSVExportAdapter(decryptFn(encryptedCredentials));
+      case "dynamodb": {
+        const connectionString = decryptFn(encryptedCredentials);
+        return new DynamoDBAdapter(connectionString, databaseName);
+      }
+      case "sqlserver": {
+        const connectionString = decryptFn(encryptedCredentials);
+        return new SQLServerAdapter(connectionString, databaseName);
+      }
+      case "redis": {
+        const connectionString = decryptFn(encryptedCredentials);
+        return new RedisAdapter(connectionString, databaseName);
+      }
       default:
         throw new Error(`Unsupported database type for generation: ${type}`);
     }
