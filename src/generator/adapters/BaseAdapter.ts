@@ -16,6 +16,7 @@ import seedrandom from "seedrandom";
 import crypto from "crypto";
 import { Faker, en } from "@faker-js/faker";
 import { fieldInferenceEngine } from "../core/FieldInferenceEngine";
+import { ConstraintEngine, ColumnDependencyGraph } from "../core/ConstraintEngine";
 
 export interface CollectionDetails {
   primaryKey?: string;
@@ -1424,60 +1425,33 @@ export abstract class BaseAdapter {
 
   /**
    * Sort fields topologically based on cross-column constraints.
+   * Uses ColumnDependencyGraph from ConstraintEngine for cycle-safe sorting.
    * If B depends on A (e.g. B > A), A comes first.
    */
   protected sortFieldsByDependency(fields: SchemaField[]): SchemaField[] {
-    const dependencyMap = new Map<string, Set<string>>();
+    const graph = new ColumnDependencyGraph(fields);
+    const orderedNames = graph.getTopologicalSort();
+    
     const nameToField = new Map<string, SchemaField>();
-
     for (const field of fields) {
       nameToField.set(field.name, field);
-      if (!dependencyMap.has(field.name)) {
-        dependencyMap.set(field.name, new Set());
-      }
-
-      const c = field.constraints;
-      if (c) {
-        const deps = [c.minColumn, c.maxColumn, c.gtColumn, c.ltColumn];
-        for (const dep of deps) {
-          if (dep) {
-            dependencyMap.get(field.name)!.add(dep);
-          }
-        }
+    }
+    
+    const orderedFields: SchemaField[] = [];
+    for (const name of orderedNames) {
+      const field = nameToField.get(name);
+      if (field) {
+        orderedFields.push(field);
       }
     }
-
-    const visited = new Set<string>();
-    const tempVisited = new Set<string>();
-    const sorted: SchemaField[] = [];
-
-    const visit = (fieldName: string) => {
-      if (tempVisited.has(fieldName)) return; // Cyclic dependency detected, ignore
-      if (visited.has(fieldName)) return;
-
-      tempVisited.add(fieldName);
-
-      const deps = dependencyMap.get(fieldName);
-      if (deps) {
-        for (const depName of deps) {
-          if (nameToField.has(depName)) {
-            visit(depName);
-          }
-        }
-      }
-
-      tempVisited.delete(fieldName);
-      visited.add(fieldName);
-
-      const f = nameToField.get(fieldName);
-      if (f) sorted.push(f);
-    };
-
+    
     for (const field of fields) {
-      visit(field.name);
+      if (!orderedFields.includes(field)) {
+        orderedFields.push(field);
+      }
     }
-
-    return sorted;
+    
+    return orderedFields;
   }
 
   protected buildRelationshipMap(relationships: SchemaRelationship[]): void {
