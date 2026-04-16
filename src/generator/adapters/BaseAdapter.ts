@@ -65,6 +65,49 @@ export abstract class BaseAdapter {
     schema?: SchemaField[],
   ): Promise<(string | number)[]>;
 
+  /**
+   * Consumes a stream of documents and writes them in batches.
+   * Default implementation uses insertDocuments.
+   */
+  async writeBatchStream(
+    collectionName: string,
+    stream: AsyncGenerator<GeneratedDocument>,
+    batchSize: number = 1000,
+    allowedReferenceFields?: Set<string>,
+    schema?: SchemaField[],
+  ): Promise<(string | number)[]> {
+    const insertedIds: (string | number)[] = [];
+    let batch: GeneratedDocument[] = [];
+
+    for await (const doc of stream) {
+      batch.push(doc);
+      if (batch.length >= batchSize) {
+        const ids = await this.insertDocuments(
+          collectionName,
+          batch,
+          batchSize,
+          allowedReferenceFields,
+          schema,
+        );
+        insertedIds.push(...ids);
+        batch = [];
+      }
+    }
+
+    if (batch.length > 0) {
+      const ids = await this.insertDocuments(
+        collectionName,
+        batch,
+        batchSize,
+        allowedReferenceFields,
+        schema,
+      );
+      insertedIds.push(...ids);
+    }
+
+    return insertedIds;
+  }
+
   abstract clearCollection(collectionName: string): Promise<void>;
 
   abstract collectionExists(collectionName: string): Promise<boolean>;
@@ -132,8 +175,8 @@ export abstract class BaseAdapter {
   ): Promise<void> {
     if (seed) this.seed = seed;
 
-    const { fakerEN } = await import("@faker-js/faker");
-    this.faker = fakerEN;
+    const { faker } = await import("@faker-js/faker");
+    this.faker = faker;
 
     this.collectionIdToName.clear();
     this.schemaMap.clear();
@@ -159,9 +202,29 @@ export abstract class BaseAdapter {
     count: number,
   ): Promise<GeneratedDocument[]> {
     const documents: GeneratedDocument[] = [];
+    for await (const doc of this.generateStream(collection, count)) {
+      documents.push(doc);
+    }
+    return documents;
+  }
+
+  /**
+   * Generates a deterministic stream of documents.
+   */
+  async *generateStream(
+    collection: SchemaCollection,
+    count: number,
+    rangeStart: number = 0,
+  ): AsyncGenerator<GeneratedDocument> {
     const random = seedrandom(`${this.seed}_${collection.name}`);
 
-    // Note: Using synced schema from schemaMap to ensure FK metadata is present.
+    // Skip ahead if rangeStart > 0 to maintain determinism
+    // Note: seedrandom doesn't support skipping easily without state or manual loops
+    // For now, we do manual loops to advance the RNG for simplicity/correctness
+    for (let i = 0; i < rangeStart; i++) {
+      random();
+    }
+
     const syncedSchema =
       this.schemaMap.get(collection.name) ||
       this.schemaMap.get(collection.name.split(".").pop()!) ||
@@ -170,13 +233,12 @@ export abstract class BaseAdapter {
     const pkFields = syncedSchema.fields.filter((f) => f.isPrimaryKey);
     const isCompositePK = pkFields.length > 1;
 
-    for (let i = 0; i < count; i++) {
+    for (let i = rangeStart; i < rangeStart + count; i++) {
       const doc: GeneratedDocument = {
         id: undefined as any,
         data: {},
       };
 
-      // TODO: Composite key handling not working yet
       if (isCompositePK) {
         const sortedPkFields = [...pkFields].sort(
           (a, b) =>
@@ -185,16 +247,11 @@ export abstract class BaseAdapter {
         );
 
         for (const pkField of sortedPkFields) {
-          // If this PK column is also a FK, skip it - it will be populated by relationship resolver
-          if (pkField.isForeignKey) {
-            continue;
-          }
-
+          if (pkField.isForeignKey) continue;
           const pkValue = this.generatePKValue(collection.name, pkField, i);
           doc.data[pkField.name] = pkValue;
         }
 
-        // Use first non-FK PK column as the "id" for internal tracking
         const firstNonFKPK = sortedPkFields.find((f) => !f.isForeignKey);
         if (firstNonFKPK && doc.data[firstNonFKPK.name] !== undefined) {
           doc.id = doc.data[firstNonFKPK.name] as string | number;
@@ -217,7 +274,7 @@ export abstract class BaseAdapter {
       for (const field of sortedFields) {
         if (field.isPrimaryKey) continue;
         if (field.name === "id" && !field.isPrimaryKey) continue;
-        if (field.type === "reference" || field.isForeignKey) continue; // Handled by resolver
+        if (field.type === "reference" || field.isForeignKey) continue;
 
         const context: FieldGenerationContext = {
           collectionName: syncedSchema.name,
@@ -235,10 +292,8 @@ export abstract class BaseAdapter {
 
       await this.resolveRelationships(collection.name, i, doc, random);
 
-      documents.push(doc);
+      yield doc;
     }
-
-    return documents;
   }
 
   protected generatePKValue(

@@ -1,5 +1,6 @@
 
-import { Faker, en } from "@faker-js/faker";
+import { faker } from "@faker-js/faker/locale/en";
+import type { Faker } from "@faker-js/faker";
 
 export interface InferenceResult {
 	generator: (faker: Faker) => any;
@@ -21,10 +22,9 @@ type InferenceRule = {
 export class FieldInferenceEngine {
 	private rules: InferenceRule[] = [];
 	private cache: Map<string, InferenceResult> = new Map();
-	private faker: Faker;
+	private faker = faker;
 
 	constructor() {
-		this.faker = new Faker({ locale: [en] });
 		this.initializeRules();
 	}
 

@@ -182,8 +182,8 @@ describe("TestDataGeneratorService with InMemoryAdapter", () => {
 		};
 
 		// Mock adapter throwing
-		const originalGenerate = adapter.generateCollectionData;
-		adapter.generateCollectionData = async () => {
+		const originalGenerateStream = adapter.generateStream;
+		adapter.generateStream = async function* () {
 			throw new Error("Simulated generator failure");
 		};
 
@@ -193,6 +193,6 @@ describe("TestDataGeneratorService with InMemoryAdapter", () => {
 		expect(result.totalDocumentsGenerated).toBe(0);
 		expect(result.errors?.[0]).toContain("Simulated generator failure");
 		
-		adapter.generateCollectionData = originalGenerate;
+		adapter.generateStream = originalGenerateStream;
 	});
 });
