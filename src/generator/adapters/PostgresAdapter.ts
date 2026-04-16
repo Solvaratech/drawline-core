@@ -84,11 +84,22 @@ export class PostgresAdapter extends BaseAdapter {
     if (!this.client) throw new Error("Not connected to PostgreSQL");
     if (documents.length === 0) return [];
 
+    if (documents.length >= 5000) {
+      return this.insertDocumentsUnnestBulk(collectionName, documents, allowedReferenceFields);
+    }
+
+    return this.insertDocumentsBatch(collectionName, documents, batchSize, allowedReferenceFields, schema);
+  }
+
+  private async insertDocumentsUnnestBulk(
+    collectionName: string,
+    documents: GeneratedDocument[],
+    allowedReferenceFields?: Set<string>,
+  ): Promise<(string | number)[]> {
     const insertedIds: (string | number)[] = [];
 
     const schemaInfo = await this.getSchemaInfo(collectionName);
-    const { columns: columnTypes, autoIncrement: autoIncrementColumns } =
-      schemaInfo;
+    const { columns: columnTypes, autoIncrement: autoIncrementColumns } = schemaInfo;
     const validColumns = new Set(columnTypes.keys());
 
     const details = await this.getCollectionDetails(collectionName);
@@ -120,17 +131,143 @@ export class PostgresAdapter extends BaseAdapter {
     }
 
     if (columns.length === 0) {
-      logger.warn(
-        "PostgresAdapter",
-        `No matching columns for table ${collectionName}`,
-      );
+      logger.warn("PostgresAdapter", `No matching columns for table ${collectionName}`);
       return [];
     }
 
-    logger.log(
-      "PostgresAdapter",
-      `Inserting ${documents.length} rows into ${collectionName}`,
+    logger.log("PostgresAdapter", `UNNEST bulk insert: ${documents.length} rows into ${collectionName}`);
+
+    const columnArrays: Record<string, unknown[]> = {};
+    for (const col of columns) {
+      columnArrays[col] = [];
+    }
+
+    for (const doc of documents) {
+      const rowData = { ...doc.data };
+
+      if (doc.id !== undefined && primaryKey && validColumns.has(primaryKey) && !autoIncrementColumns.has(primaryKey)) {
+        if (rowData[primaryKey] === undefined) {
+          rowData[primaryKey] = doc.id;
+        }
+      }
+
+      for (const col of columns) {
+        let val = rowData[col];
+        const pgType = columnTypes.get(col);
+
+        if (val === undefined || val === null) {
+          val = null;
+        } else if (pgType === "json" || pgType === "jsonb") {
+          val = JSON.stringify(val);
+        }
+
+        columnArrays[col].push(val);
+      }
+    }
+
+    const placeholders: string[] = [];
+    for (let i = 0; i < documents.length; i++) {
+      placeholders.push(`(${columns.map((_, j) => `$${j * documents.length + i + 1}`).join(", ")})`);
+    }
+
+    const values: unknown[] = [];
+    for (const col of columns) {
+      values.push(...columnArrays[col]);
+    }
+
+    const { schema: tableSchema, table: tableName } = this.parseTableSchema(collectionName);
+    const query = `
+      INSERT INTO "${tableSchema}"."${tableName}" (${columns.map((c) => `"${c}"`).join(", ")})
+      VALUES ${placeholders.join(", ")}
+      ON CONFLICT DO NOTHING
+      RETURNING "${primaryKey}"
+    `;
+
+    try {
+      const result = await this.client!.query(query, values);
+
+      if (result.rows.length > 0) {
+        result.rows.forEach((r) => {
+          if (r[primaryKey] !== undefined) {
+            insertedIds.push(r[primaryKey] as string | number);
+          }
+        });
+      } else {
+        for (const doc of documents) {
+          if (doc.id !== undefined && doc.id !== null) {
+            insertedIds.push(doc.id);
+          } else if (primaryKey && validColumns.has(primaryKey) && !autoIncrementColumns.has(primaryKey)) {
+            insertedIds.push(doc.data[primaryKey] as string | number);
+          }
+        }
+      }
+
+      if (details.isCompositePK && details.primaryKeys) {
+        const existing = this.insertedCompositePKRows.get(collectionName) || [];
+        for (const doc of documents) {
+          const pkRow: Record<string, unknown> = {};
+          for (const pk of details.primaryKeys!) {
+            pkRow[pk] = doc.data[pk];
+          }
+          existing.push(pkRow);
+        }
+        this.insertedCompositePKRows.set(collectionName, existing);
+        const simpleName = collectionName.split(".").pop()!;
+        if (simpleName !== collectionName) {
+          this.insertedCompositePKRows.set(simpleName, existing);
+        }
+      }
+    } catch (error) {
+      logger.error("PostgresAdapter", `UNNEST bulk insert failed for ${collectionName}:`, error);
+      return this.insertDocumentsBatch(collectionName, documents, 1000, allowedReferenceFields);
+    }
+
+    return insertedIds;
+  }
+
+  private async insertDocumentsBatch(
+    collectionName: string,
+    documents: GeneratedDocument[],
+    batchSize: number,
+    allowedReferenceFields?: Set<string>,
+    schema?: SchemaField[],
+  ): Promise<(string | number)[]> {
+    const insertedIds: (string | number)[] = [];
+
+    const schemaInfo = await this.getSchemaInfo(collectionName);
+    const { columns: columnTypes, autoIncrement: autoIncrementColumns } = schemaInfo;
+    const validColumns = new Set(columnTypes.keys());
+
+    const details = await this.getCollectionDetails(collectionName);
+    const primaryKey = details.primaryKey || "id";
+
+    const allKeys = new Set<string>();
+    documents.forEach((doc) => {
+      Object.keys(doc.data).forEach((k) => allKeys.add(k));
+    });
+    const columns = Array.from(allKeys).filter(
+      (key) => validColumns.has(key) && !autoIncrementColumns.has(key),
     );
+
+    const hasExplicitId = documents.some(
+      (d) => d.id !== undefined && d.id !== null,
+    );
+    if (
+      hasExplicitId &&
+      primaryKey &&
+      validColumns.has(primaryKey) &&
+      !columns.includes(primaryKey) &&
+      !autoIncrementColumns.has(primaryKey)
+    ) {
+      columns.unshift(primaryKey);
+    }
+
+    if (columns.length === 0) {
+      logger.warn("PostgresAdapter", `No matching columns for table ${collectionName}`);
+      return [];
+    }
+
+    logger.log("PostgresAdapter", `Batch insert: ${documents.length} rows into ${collectionName}`);
 
     for (let i = 0; i < documents.length; i += batchSize) {
       const batch = documents.slice(i, i + batchSize);
@@ -141,7 +278,6 @@ export class PostgresAdapter extends BaseAdapter {
         const rowPlaceholders: string[] = [];
         const rowData = { ...doc.data };
 
-        // Inject ID if applicable
         if (
           doc.id !== undefined &&
           primaryKey &&
@@ -171,26 +307,19 @@ export class PostgresAdapter extends BaseAdapter {
         placeholders.push(`(${rowPlaceholders.join(", ")})`);
       });
 
-      const { schema: tableSchema, table: tableName } =
-        this.parseTableSchema(collectionName);
+      const { schema: tableSchema, table: tableName } = this.parseTableSchema(collectionName);
       let query = `
-				INSERT INTO "${tableSchema}"."${tableName}" (${columns.map((c) => `"${c}"`).join(", ")})
-				VALUES ${placeholders.join(", ")}
-				ON CONFLICT DO NOTHING
-			`;
+        INSERT INTO "${tableSchema}"."${tableName}" (${columns.map((c) => `"${c}"`).join(", ")})
+        VALUES ${placeholders.join(", ")}
+        ON CONFLICT DO NOTHING
+      `;
 
       if (primaryKey && validColumns.has(primaryKey)) {
         query += ` RETURNING "${primaryKey}"`;
       }
 
       try {
-        if (collectionName.includes("order_items")) {
-          logger.log(
-            "PostgresAdapter",
-            `Inserting ${collectionName}: columns=${columns.join(",")}, values0=${JSON.stringify(values.slice(0, columns.length))}`,
-          );
-        }
-        const result = await this.client.query(query, values);
+        const result = await this.client!.query(query, values);
 
         if (primaryKey && validColumns.has(primaryKey)) {
           result.rows.forEach((r) => {
@@ -201,43 +330,22 @@ export class PostgresAdapter extends BaseAdapter {
         }
 
         if (details.isCompositePK && details.primaryKeys) {
-          const existing =
-            this.insertedCompositePKRows.get(collectionName) || [];
+          const existing = this.insertedCompositePKRows.get(collectionName) || [];
           for (const doc of batch) {
             const pkRow: Record<string, unknown> = {};
-            for (const pk of details.primaryKeys) {
+            for (const pk of details.primaryKeys!) {
               pkRow[pk] = doc.data[pk];
             }
             existing.push(pkRow);
           }
           this.insertedCompositePKRows.set(collectionName, existing);
-        } 
-
-        // After successful insert, cache composite PK rows
-        if (details.isCompositePK && details.primaryKeys) {
-          const existing =
-            this.insertedCompositePKRows.get(collectionName) || [];
-          for (const doc of batch) {
-            const pkRow: Record<string, unknown> = {};
-            for (const pk of details.primaryKeys) {
-              pkRow[pk] = doc.data[pk];
-            }
-            existing.push(pkRow);
-          }
-          this.insertedCompositePKRows.set(collectionName, existing);
-
-          // ← also store under simple name so lookup works regardless of prefix
           const simpleName = collectionName.split(".").pop()!;
           if (simpleName !== collectionName) {
             this.insertedCompositePKRows.set(simpleName, existing);
           }
-        } 
+        }
       } catch (error) {
-        logger.error(
-          "PostgresAdapter",
-          `Batch insert failed for ${collectionName}:`,
-          error,
-        );
+        logger.error("PostgresAdapter", `Batch insert failed for ${collectionName}:`, error);
         throw error;
       }
     }

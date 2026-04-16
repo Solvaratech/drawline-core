@@ -235,6 +235,9 @@ export class TestDataGeneratorService {
         (sum, c) => sum + c.count,
         0,
       );
+      const overallStartTime = Date.now();
+      let collectionStartTime = Date.now();
+      let lastGeneratedCount = 0;
 
       for (const collection of generationOrder) {
         const fullName = this.collectionIdToName.get(collection.id)!;
@@ -269,14 +272,21 @@ export class TestDataGeneratorService {
             schemaCol.fields,
           );
 
-          if (this.adapter.updateSequence) {
-            await this.adapter.updateSequence(fullName);
-          }
+          const collectionElapsed = Date.now() - collectionStartTime;
+          const collectionTps = ids.length / (collectionElapsed / 1000);
+          const overallElapsed = Date.now() - overallStartTime;
+          const overallTps = (totalGenerated + ids.length) / (overallElapsed / 1000);
+          const avgTps = totalGenerated > 0 ? totalGenerated / (overallElapsed / 1000) : 0;
+
+          logger.log(
+            "Generator",
+            `Completed ${fullName}: ${ids.length} docs in ${(collectionElapsed / 1000).toFixed(2)}s (${collectionTps.toFixed(0)} TPS)`,
+          );
 
           collectionResults.push({
-            collectionName: colConfig.collectionName,
-            documentCount: ids.length,
+            collectionName: fullName,
             generatedIds: ids,
+            documentCount: ids.length,
             idType: ids.length
               ? typeof ids[0] === "number"
                 ? "integer"
@@ -285,14 +295,20 @@ export class TestDataGeneratorService {
           });
 
           totalGenerated += ids.length;
+          lastGeneratedCount = totalGenerated;
 
           if (config.onProgress) {
             await config.onProgress({
               collectionName: colConfig.collectionName,
               generatedCount: totalGenerated,
               totalCount: totalToGenerate,
+              tps: Math.round(avgTps),
+              elapsedMs: overallElapsed,
+              estimatedRemainingMs: avgTps > 0 ? ((totalToGenerate - totalGenerated) / avgTps) * 1000 : undefined,
             });
           }
+
+          collectionStartTime = Date.now();
         } catch (err) {
           const msg = `Error processing ${fullName}: ${
             err instanceof Error ? err.message : String(err)

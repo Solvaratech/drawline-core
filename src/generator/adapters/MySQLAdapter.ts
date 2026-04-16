@@ -106,6 +106,11 @@ export class MySQLAdapter extends BaseAdapter {
 
     const escapedCollection = this.escapeIdentifier(collectionName);
 
+    // Determine the primary key to use for accurate ID extraction
+    const details = await this.getCollectionDetails(collectionName);
+    const primaryKey = details.primaryKey || "id";
+    const isAutoIncrement = !!(details as any).isAutoIncrement;
+
     try {
       const keys = Object.keys(documents[0]);
       const columns = keys.map(this.escapeIdentifier).join(", ");
@@ -114,12 +119,30 @@ export class MySQLAdapter extends BaseAdapter {
 
       const query = `INSERT INTO ${escapedCollection} (${columns}) VALUES ${placeholders}`;
       const [result] = await this.connection.query(query, values);
-      
-      const insertId = (result as any).insertId;
-      if (insertId !== undefined) {
-        return documents.map((_, index) => insertId + index); 
+
+      if (isAutoIncrement) {
+        // For auto-increment PKs, the database tells us the first inserted ID
+        const insertId = (result as any).insertId;
+        if (insertId !== undefined && insertId > 0) {
+          return documents.map((_, index) => insertId + index);
+        }
       }
-      return documents.map((_, index) => index + 1); // Fallback
+
+      // For manual PKs (UUID, custom string/int), extract IDs directly from documents
+      if (primaryKey && keys.includes(primaryKey)) {
+        return documents.map(doc => doc[primaryKey]).filter(id => id !== undefined && id !== null);
+      }
+
+      // For composite PKs, extract the first PK component as a representative ID
+      if (details.isCompositePK && details.primaryKeys) {
+        const firstPK = details.primaryKeys[0];
+        if (firstPK && keys.includes(firstPK)) {
+          return documents.map(doc => doc[firstPK]).filter(id => id !== undefined && id !== null);
+        }
+      }
+
+      // Last resort: return document indices (should rarely reach here)
+      return documents.map((_, index) => index + 1);
     } catch (error: any) {
       if (error.message && error.message.includes("ER_NO_SUCH_TABLE")) {
         throw new Error("ER_NO_SUCH_TABLE: Table does not exist");
@@ -186,8 +209,9 @@ export class MySQLAdapter extends BaseAdapter {
       return {
         primaryKey: pkRows[0].Field,
         primaryKeyType: type,
-        isCompositePK: false
-      };
+        isCompositePK: false,
+        isAutoIncrement: pkRows[0].Extra?.toLowerCase().includes("auto_increment")
+      } as CollectionDetails;
     }
 
     return {
