@@ -19,7 +19,7 @@ program
 	.description("Generate and populate test data")
 	.requiredOption("-s, --schema <path>", "Path to schema JSON file")
 	.requiredOption("-c, --config <path>", "Path to configuration JSON file")
-	.option("-d, --db <type>", "Database type (mongodb, postgresql, firestore, in-memory)", "in-memory")
+	.option("-d, --db <type>", "Database type (mongodb, postgresql, firestore, in-memory, dynamodb, sqlserver, redis)", "in-memory")
 	.option("-u, --url <url>", "Database connection URL (or credentials for Firestore)")
 	.action(async (options) => {
 		try {
