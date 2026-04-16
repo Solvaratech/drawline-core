@@ -249,20 +249,21 @@ export class TestDataGeneratorService {
         try {
           const schemaCol = effectiveSchema.get(fullName) || collection;
 
-          const documents = await this.adapter.generateCollectionData(
-            schemaCol,
-            colConfig.count,
-          );
-
           const allowedReferenceFields = this.getAllowedReferenceFields(
             schemaCol,
             filteredRelationships,
             collection.id,
           );
 
-          const ids = await this.adapter.insertDocuments(
+          // Phase 2: High Engineering - Streaming Batch Output
+          const docStream = this.adapter.generateStream(
+            schemaCol,
+            colConfig.count,
+          );
+
+          const ids = await this.adapter.writeBatchStream(
             fullName,
-            documents,
+            docStream,
             config.batchSize,
             allowedReferenceFields,
             schemaCol.fields,
