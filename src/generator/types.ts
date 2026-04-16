@@ -49,7 +49,16 @@ export interface TestDataConfig {
 	validateAfter?: boolean;
 	batchSize?: number;
 	allowProduction?: boolean;
-	onProgress?: (progress: { collectionName: string; generatedCount: number; totalCount: number }) => Promise<void> | void;
+	onProgress?: (progress: ProgressUpdate) => Promise<void> | void;
+}
+
+export interface ProgressUpdate {
+	collectionName: string;
+	generatedCount: number;
+	totalCount: number;
+	tps?: number;
+	elapsedMs?: number;
+	estimatedRemainingMs?: number;
 }
 
 /**
@@ -57,6 +66,7 @@ export interface TestDataConfig {
  */
 export interface GeneratedDocument {
 	id: string | number;
+	pkValues?: Record<string, string | number>; // For composite primary keys
 	data: Record<string, unknown>;
 }
 
