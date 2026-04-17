@@ -19,7 +19,8 @@ if (ipcChannel && typeof ipcChannel.on === 'function') {
 				databaseName,
 				collections,
 				relationships,
-				config
+				config,
+				shard
 			} = msg.data;
 
 			try {
@@ -32,31 +33,40 @@ if (ipcChannel && typeof ipcChannel.on === 'function') {
 
 				const service = new TestDataGeneratorService(adapter);
 
-				// Reconstruct the onProgress callback to send messages back to parent
-				const generatorConfig = {
-					...config,
-					onProgress: async (progress: any) => {
-						const payload = {
-							event: "progress",
-							data: progress
-						};
-						if (parentPort) {
-							parentPort.postMessage(payload);
-						} else if (process.send) {
-							process.send(payload);
-						}
+				const postProgress = async (progress: any) => {
+					const payload = {
+						event: "progress",
+						data: { ...progress, workerId: shard?.workerId }
+					};
+					if (parentPort) {
+						parentPort.postMessage(payload);
+					} else if (process.send) {
+						process.send(payload);
 					}
 				};
 
-				const result = await service.generateAndPopulate(
-					collections,
-					relationships,
-					generatorConfig
-				);
+				let result;
+				if (shard && shard.collectionIndex !== undefined) {
+					const collection = collections[shard.collectionIndex];
+					result = await service.generateCollectionWithRange(
+						collection,
+						shard.rangeStart,
+						shard.count,
+						{ ...config, onProgress: postProgress },
+						relationships
+					);
+				} else {
+					result = await service.generateAndPopulate(
+						collections,
+						relationships,
+						{ ...config, onProgress: postProgress }
+					);
+				}
 
 				const donePayload = {
 					event: "done",
-					data: result
+					data: result,
+					workerId: shard?.workerId
 				};
 				if (parentPort) parentPort.postMessage(donePayload);
 				else if (process.send) process.send(donePayload);
@@ -65,7 +75,8 @@ if (ipcChannel && typeof ipcChannel.on === 'function') {
 				console.error("Worker Error:", error);
 				const errorPayload = {
 					event: "error",
-					error: error instanceof Error ? error.message : String(error)
+					error: error instanceof Error ? error.message : String(error),
+					workerId: shard?.workerId
 				};
 				if (parentPort) parentPort.postMessage(errorPayload);
 				else if (process.send) process.send(errorPayload);
