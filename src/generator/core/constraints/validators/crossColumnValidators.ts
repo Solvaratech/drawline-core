@@ -309,3 +309,42 @@ export function createConditionalValidator(
     },
   };
 }
+
+export function createMutuallyExclusiveValidator(
+  fieldName: string,
+  otherFields: string[]
+): ConstraintValidator<unknown> {
+  return {
+    metadata: {
+      name: `${fieldName}:mutually_exclusive`,
+      type: "cross_column",
+      severity: "error",
+      description: `${fieldName} is mutually exclusive with [${otherFields.join(", ")}]`,
+    },
+    validate(value: unknown, context: ConstraintContext): ValidationResult {
+      if (!context.document) return { valid: true };
+
+      const isSet = value !== undefined && value !== null;
+      if (!isSet) return { valid: true };
+
+      const conflicts = otherFields.filter(
+        (f) => f !== fieldName && context.document![f] !== undefined && context.document![f] !== null
+      );
+
+      if (conflicts.length > 0) {
+        return {
+          valid: false,
+          value,
+          expected: "only one field should be set",
+          actual: `conflicts with ${conflicts.join(", ")}`,
+          errorMessage: `${fieldName} cannot be set when [${conflicts.join(
+            ", "
+          )}] are also set`,
+          retryable: true,
+        };
+      }
+
+      return { valid: true };
+    },
+  };
+}

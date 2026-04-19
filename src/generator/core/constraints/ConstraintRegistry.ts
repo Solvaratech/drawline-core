@@ -11,6 +11,8 @@ import {
   ConstraintSeverity,
 } from "./types";
 
+import { SchemaField } from "../../../types/schemaDesign";
+
 export interface RegistryOptions {
   defaultMode?: ConstraintMode;
   maxRetries?: number;
@@ -23,6 +25,7 @@ export class ConstraintRegistry {
   private documentConstraints: ConstraintValidator<unknown>[] = [];
   private options: Required<RegistryOptions>;
   private priority: Map<string, number> = new Map();
+  private evaluationOrder: string[] | null = null;
 
   constructor(options: RegistryOptions = {}) {
     this.options = {
@@ -115,8 +118,15 @@ export class ConstraintRegistry {
       random: context?.random ?? (() => Math.random()),
       ...context,
     };
+    
+    if (!this.evaluationOrder) {
+      this.resolveEvaluationOrder(Object.keys(document));
+    }
 
-    for (const fieldName of Object.keys(document)) {
+    const fieldOrder = this.evaluationOrder || Object.keys(document);
+
+    for (const fieldName of fieldOrder) {
+      if (document[fieldName] === undefined) continue;
       const fieldConstraints = this.getFieldConstraints(fieldName);
       const sortedConstraints = this.sortByPriority(
         fieldName,
@@ -260,6 +270,35 @@ export class ConstraintRegistry {
     });
   }
 
+  private resolveEvaluationOrder(fieldNames: string[]): void {
+    const adj = new Map<string, Set<string>>();
+    const inDegree = new Map<string, number>();
+
+    for (const name of fieldNames) {
+      adj.set(name, new Set());
+      inDegree.set(name, 0);
+    }
+
+    // Inspect validators to find dependencies
+    for (const [fieldName, validators] of this.fieldConstraints) {
+      for (const validator of validators) {
+        // This is a bit heuristic, but we can look for 'targetField' or 'comparisonField' in validator metadata/config
+        // Since we don't have direct access to the source config here easily unless we store it, 
+        // we might need to rely on the register method passing dependencies.
+        // For now, let's assume we can detect it from some standard property if we added it.
+        // OR we can just use the priority system plus a simple check.
+      }
+    }
+
+    // For Week 1, we will stick to priority-based sorting but enhance sortByPriority
+    // In a future update, we can implement a full topological sort if we store dependencies per validator.
+    this.evaluationOrder = [...fieldNames].sort((a, b) => {
+      const aP = this.priority.get(a) ?? 0;
+      const bP = this.priority.get(b) ?? 0;
+      return bP - aP;
+    });
+  }
+
   private applyCorrections(
     document: Record<string, unknown>,
     violations: ValidationResult[]
@@ -274,10 +313,10 @@ export class ConstraintRegistry {
   }
 
   fromSchemaFields(
-    fields: Array<{
+    fields: SchemaField[] | Array<{
       name: string;
       type: string;
-      constraints?: Record<string, unknown>;
+      constraints?: any;
       required?: boolean;
     }>
   ): ConstraintRegistry {
@@ -403,8 +442,24 @@ export class ConstraintRegistry {
         this.register(`${field.name}:cross_column`, crossColValidator);
         this.registerFieldConstraint(field.name, crossColValidator);
       }
+
+      if (constraints.temporal) {
+        const temporal = constraints.temporal as any;
+        const { createTemporalValidator } = require("./validators/temporalValidators");
+        const validator = createTemporalValidator(field.name, temporal);
+        this.register(`${field.name}:temporal`, validator);
+        this.registerFieldConstraint(field.name, validator);
+      }
+
+      if (constraints.mutuallyExclusive && Array.isArray(constraints.mutuallyExclusive)) {
+        const { createMutuallyExclusiveValidator } = require("./validators/crossColumnValidators");
+        const validator = createMutuallyExclusiveValidator(field.name, constraints.mutuallyExclusive);
+        this.register(`${field.name}:mutually_exclusive`, validator);
+        this.registerFieldConstraint(field.name, validator);
+      }
     }
 
+    this.evaluationOrder = null; // Reset order when schema changes
     return this;
   }
 

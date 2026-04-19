@@ -22,6 +22,7 @@ export { DynamoDBAdapter } from "./adapters/DynamoDBAdapter";
 export { SQLServerAdapter } from "./adapters/SQLServerAdapter";
 export { RedisAdapter } from "./adapters/RedisAdapter";
 export { DependencyGraph } from "./core/DependencyGraph";
+import { ConstraintRegistry } from "./core/constraints/ConstraintRegistry";
 import { logger } from "../utils";
 import type {
   TestDataConfig,
@@ -282,9 +283,36 @@ export class TestDataGeneratorService {
             colConfig.count,
           );
 
+          // Phase 2: Constraint Validation Integration
+          const registry = new ConstraintRegistry().fromSchemaFields(schemaCol.fields);
+          
+          async function* validatedStream() {
+            for await (const doc of docStream) {
+              const results = registry.validateDocument(doc.data);
+              if (results.length > 0) {
+                // Heuristic: automatically try to correct common errors if they provide 'expected'
+                const correctedData = { ...doc.data };
+                let fixed = false;
+                for (const res of results) {
+                  if (res.fieldName && res.expected !== undefined) {
+                    correctedData[res.fieldName] = res.expected;
+                    fixed = true;
+                  }
+                }
+                if (fixed) {
+                  yield { ...doc, data: correctedData };
+                } else {
+                  yield doc;
+                }
+              } else {
+                yield doc;
+              }
+            }
+          }
+
           const ids = await this.adapter.writeBatchStream(
             fullName,
-            docStream,
+            validatedStream(),
             config.batchSize,
             allowedReferenceFields,
             schemaCol.fields,
