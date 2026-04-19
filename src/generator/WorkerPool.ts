@@ -127,12 +127,98 @@ export class WorkerPool {
   getQueuedTaskCount(): number {
     return this.taskQueue.length;
   }
+
+  async processShardedGeneration(
+    taskData: Omit<WorkerTask, "event">,
+    shardTasks: ShardTask[],
+    onProgress?: (progress: any, workerId: number) => void
+  ): Promise<WorkerResult[]> {
+    const results: WorkerResult[] = [];
+    const pendingTasks = new Map<number, Promise<WorkerResult>>();
+
+    for (const shard of shardTasks) {
+      const workerIndex = shard.workerId % this.workers.length;
+
+      const shardTask: WorkerTask = {
+        event: "start_generation",
+        data: {
+          ...taskData,
+          shard: {
+            workerId: shard.workerId,
+            collectionIndex: shard.collectionIndex,
+            rangeStart: shard.rangeStart,
+            count: shard.count,
+          },
+        },
+      };
+
+      const worker = this.workers[workerIndex];
+      const taskPromise = new Promise<WorkerResult>((resolve, reject) => {
+        const messageHandler = (result: WorkerResult) => {
+          if (result.event === "progress") {
+            onProgress?.(result.data, shard.workerId);
+            return;
+          }
+
+          worker.off("message", messageHandler);
+          worker.off("error", errorHandler);
+
+          if (result.event === "error") {
+            reject(new Error(result.error || "Unknown error"));
+          } else {
+            resolve(result);
+          }
+        };
+
+        const errorHandler = (error: Error) => {
+          worker.off("message", messageHandler);
+          worker.off("error", errorHandler);
+          reject(error);
+        };
+
+        worker.on("message", messageHandler);
+        worker.on("error", errorHandler);
+
+        try {
+          worker.postMessage(shardTask);
+        } catch (error) {
+          worker.off("message", messageHandler);
+          worker.off("error", errorHandler);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+
+      pendingTasks.set(shard.workerId, taskPromise);
+    }
+
+    for (const [workerId, promise] of pendingTasks) {
+      try {
+        const result = await promise;
+        results.push(result);
+      } catch (error) {
+        results.push({
+          event: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return results;
+  }
 }
 
 export interface ShardRange {
   workerId: number;
   start: number;
   end: number;
+  count: number;
+}
+
+export interface ShardTask {
+  workerId: number;
+  collectionIndex: number;
+  rangeStart: number;
+  count: number;
 }
 
 export function computeShards(
@@ -153,6 +239,7 @@ export function computeShards(
       workerId: i,
       start: currentStart,
       end: currentStart + chunkSize,
+      count: chunkSize,
     });
     currentStart += chunkSize;
   }
@@ -172,4 +259,29 @@ export function generateDeterministicShards(
   }
 
   return result;
+}
+
+export function createShardTasks(
+  collections: Array<{ collectionName: string; count: number }>,
+  workerCount: number,
+  seed: string | number
+): ShardTask[] {
+  const tasks: ShardTask[] = [];
+  const shardsByCollection = generateDeterministicShards(collections, workerCount, seed);
+
+  for (let colIndex = 0; colIndex < collections.length; colIndex++) {
+    const col = collections[colIndex];
+    const shards = shardsByCollection.get(col.collectionName) || [];
+
+    for (const shard of shards) {
+      tasks.push({
+        workerId: shard.workerId,
+        collectionIndex: colIndex,
+        rangeStart: shard.start,
+        count: shard.count,
+      });
+    }
+  }
+
+  return tasks;
 }
