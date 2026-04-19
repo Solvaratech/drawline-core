@@ -221,17 +221,21 @@ export abstract class BaseAdapter {
   ): AsyncGenerator<GeneratedDocument> {
     const random = seedrandom(`${this.seed}_${collection.name}`);
 
-    // Skip ahead if rangeStart > 0 to maintain determinism
-    // Note: seedrandom doesn't support skipping easily without state or manual loops
-    // For now, we do manual loops to advance the RNG for simplicity/correctness
-    for (let i = 0; i < rangeStart; i++) {
-      random();
-    }
-
     const syncedSchema =
       this.schemaMap.get(collection.name) ||
       this.schemaMap.get(collection.name.split(".").pop()!) ||
       collection;
+
+    if (rangeStart > 0) {
+      for (let i = 0; i < rangeStart; i++) {
+        for (const field of syncedSchema.fields) {
+          if (field.isPrimaryKey) continue;
+          if (field.name === "id" && !field.isPrimaryKey) continue;
+          if (field.type === "reference" || field.isForeignKey) continue;
+          random();
+        }
+      }
+    }
 
     const pkFields = syncedSchema.fields.filter((f) => f.isPrimaryKey);
     const isCompositePK = pkFields.length > 1;

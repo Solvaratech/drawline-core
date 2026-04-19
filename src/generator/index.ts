@@ -456,4 +456,89 @@ export class TestDataGeneratorService {
   public setAdapter(adapter: BaseAdapter) {
     this.adapter = adapter;
   }
+
+  async generateCollectionWithRange(
+    collection: SchemaCollection,
+    rangeStart: number,
+    count: number,
+    config: TestDataConfig,
+    relationships: SchemaRelationship[],
+  ): Promise<GenerationResult> {
+    const errors: string[] = [];
+    const collectionResults: CollectionResult[] = [];
+
+    try {
+      await this.adapter.connect();
+
+      await this.adapter.initialize(
+        config,
+        [collection],
+        relationships,
+        config.seed,
+      );
+
+      const fullName = this.getFullCollectionName(collection);
+      this.collectionIdToName.set(collection.id, fullName);
+
+      const colConfig = config.collections.find(
+        (c) =>
+          c.collectionName === collection.name ||
+          c.collectionName === fullName,
+      );
+      if (!colConfig) {
+        throw new Error(`No config found for collection: ${collection.name}`);
+      }
+
+      const effectiveSchema = JSON.parse(JSON.stringify(collection)) as SchemaCollection;
+      effectiveSchema.fields = effectiveSchema.fields.map((field) =>
+        this.resolveForeignKeyField(field, new Map([[fullName, effectiveSchema]])),
+      );
+
+      await this.adapter.ensureCollection(fullName, effectiveSchema.fields, true);
+
+      const allowedReferenceFields = this.getAllowedReferenceFields(
+        effectiveSchema,
+        relationships,
+        collection.id,
+      );
+
+      const docStream = this.adapter.generateStream(
+        effectiveSchema,
+        count,
+        rangeStart,
+      );
+
+      const ids = await this.adapter.writeBatchStream(
+        fullName,
+        docStream,
+        config.batchSize,
+        allowedReferenceFields,
+        effectiveSchema.fields,
+      );
+
+      collectionResults.push({
+        collectionName: fullName,
+        generatedIds: ids,
+        documentCount: ids.length,
+        idType:
+          ids.length && typeof ids[0] === "number" ? "integer" : "string",
+      });
+
+    } catch (err) {
+      errors.push(`Fatal error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await this.adapter.disconnect();
+    }
+
+    return {
+      success: errors.length === 0,
+      collections: collectionResults,
+      errors,
+      warnings: [],
+      totalDocumentsGenerated: collectionResults.reduce(
+        (sum, r) => sum + r.documentCount,
+        0,
+      ),
+    };
+  }
 }
