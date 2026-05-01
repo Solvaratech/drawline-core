@@ -57,7 +57,8 @@ jobs:
         run: npm ci
       - name: Build Core
         run: npm run build
-      - name: Publish to NPM
-        run: npm publish --access public
+      - name: Release and Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npx semantic-release
