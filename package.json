@@ -61,6 +61,9 @@
 		"url": "https://github.com/solvaratech/drawline-core/issues"
 	},
 	"homepage": "https://github.com/solvaratech/drawline-core#readme",
+	"engines": {
+		"node": ">=22.14.0"
+	},
 	"publishConfig": {
 		"access": "public"
 	}
