@@ -165,26 +165,23 @@ export class PostgresAdapter extends BaseAdapter {
       }
     }
 
-    const placeholders: string[] = [];
-    for (let i = 0; i < documents.length; i++) {
-      placeholders.push(`(${columns.map((_, j) => `$${j * documents.length + i + 1}`).join(", ")})`);
-    }
-
-    const values: unknown[] = [];
-    for (const col of columns) {
-      values.push(...columnArrays[col]);
-    }
-
     const { schema: tableSchema, table: tableName } = this.parseTableSchema(collectionName);
+    
+    // Efficient UNNEST approach: O(columns) instead of O(rows * columns)
+    const unnestPlaceholders = columns.map((col, idx) => {
+      const pgType = columnTypes.get(col) || "text";
+      return `unnest($${idx + 1}::${pgType}[])`;
+    }).join(", ");
+
     const query = `
       INSERT INTO "${tableSchema}"."${tableName}" (${columns.map((c) => `"${c}"`).join(", ")})
-      VALUES ${placeholders.join(", ")}
+      SELECT ${unnestPlaceholders}
       ON CONFLICT DO NOTHING
       RETURNING "${primaryKey}"
     `;
 
     try {
-      const result = await this.client!.query(query, values);
+      const result = await this.client!.query(query, columns.map(col => columnArrays[col]));
 
       if (result.rows.length > 0) {
         result.rows.forEach((r) => {

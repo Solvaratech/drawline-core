@@ -1,0 +1,3 @@
+[
+  "HTTP", "HTTPS", "FTP", "SFTP", "SSH", "SMTP", "IMAP", "POP3", "MQTT", "Websocket (WS)", "Websocket Secure (WSS)", "gRPC", "TCP", "UDP", "DNS"
+]

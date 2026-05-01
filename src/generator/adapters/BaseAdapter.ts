@@ -12,11 +12,12 @@ import {
   SchemaRelationship,
 } from "../../types/schemaDesign";
 import { logger } from "../../utils";
-import seedrandom from "seedrandom";
-import crypto from "crypto";
-import { Faker, en } from "@faker-js/faker";
 import { fieldInferenceEngine } from "../core/FieldInferenceEngine";
-import { ConstraintEngine, ColumnDependencyGraph } from "../core/ConstraintEngine";
+import { SemanticProvider } from "../providers/SemanticProvider";
+import { ColumnDependencyGraph } from "../core/ColumnDependencyGraph";
+import { ConstraintRegistry, createDefaultRegistry } from "../core/constraints/ConstraintRegistry";
+import { Xoshiro128, fnv1a, generateFastDeterministicUUID } from "../utils/PerfUtils";
+import * as crypto from "crypto";
 
 export interface CollectionDetails {
   primaryKey?: string;
@@ -34,7 +35,7 @@ export interface CollectionDetails {
  * Core database adapter logic.
  */
 export abstract class BaseAdapter {
-  protected faker: any;
+  protected prng: Xoshiro128;
   protected seed: number | string = 12345;
   protected sessionId: string;
   protected collectionConfigs: Map<string, CollectionIdConfig> = new Map();
@@ -52,6 +53,8 @@ export abstract class BaseAdapter {
 
   constructor() {
     this.sessionId = crypto.randomBytes(8).toString("hex");
+    const initialSeed = typeof this.seed === "number" ? this.seed : fnv1a(String(this.seed));
+    this.prng = new Xoshiro128(initialSeed);
   }
 
   // Abstract Methods
@@ -80,27 +83,43 @@ export abstract class BaseAdapter {
     schema?: SchemaField[],
   ): Promise<(string | number)[]> {
     const insertedIds: (string | number)[] = [];
-    let batch: GeneratedDocument[] = [];
+    let currentBatch: GeneratedDocument[] = [];
+    let insertPromise: Promise<(string | number)[]> | null = null;
 
     for await (const doc of stream) {
-      batch.push(doc);
-      if (batch.length >= batchSize) {
-        const ids = await this.insertDocuments(
+      currentBatch.push(doc);
+      
+      if (currentBatch.length >= batchSize) {
+        // Wait for previous insertion if it exists
+        if (insertPromise) {
+          const ids = await insertPromise;
+          insertedIds.push(...ids);
+        }
+
+        // Start next insertion
+        const batchToInsert = [...currentBatch];
+        insertPromise = this.insertDocuments(
           collectionName,
-          batch,
+          batchToInsert,
           batchSize,
           allowedReferenceFields,
           schema,
         );
-        insertedIds.push(...ids);
-        batch = [];
+        currentBatch = [];
       }
     }
 
-    if (batch.length > 0) {
+    // Wait for the last background insertion
+    if (insertPromise) {
+      const ids = await insertPromise;
+      insertedIds.push(...ids);
+    }
+
+    // Insert any remaining documents in the final batch
+    if (currentBatch.length > 0) {
       const ids = await this.insertDocuments(
         collectionName,
-        batch,
+        currentBatch,
         batchSize,
         allowedReferenceFields,
         schema,
@@ -176,10 +195,9 @@ export abstract class BaseAdapter {
     relationships: SchemaRelationship[],
     seed?: number | string,
   ): Promise<void> {
-    if (seed) this.seed = seed;
-
-    const { faker } = await import("@faker-js/faker");
-    this.faker = faker;
+    if (seed !== undefined) this.seed = seed;
+    const seedVal = typeof this.seed === "number" ? this.seed : fnv1a(String(this.seed));
+    this.prng = new Xoshiro128(seedVal);
 
     this.collectionIdToName.clear();
     this.schemaMap.clear();
@@ -219,7 +237,8 @@ export abstract class BaseAdapter {
     count: number,
     rangeStart: number = 0,
   ): AsyncGenerator<GeneratedDocument> {
-    const random = seedrandom(`${this.seed}_${collection.name}`);
+    const seedNum = typeof this.seed === "number" ? this.seed : fnv1a(String(this.seed));
+    const random = new Xoshiro128(seedNum ^ fnv1a(collection.name));
 
     const syncedSchema =
       this.schemaMap.get(collection.name) ||
@@ -232,7 +251,7 @@ export abstract class BaseAdapter {
           if (field.isPrimaryKey) continue;
           if (field.name === "id" && !field.isPrimaryKey) continue;
           if (field.type === "reference" || field.isForeignKey) continue;
-          random();
+          random.next();
         }
       }
     }
@@ -240,67 +259,85 @@ export abstract class BaseAdapter {
     const pkFields = syncedSchema.fields.filter((f) => f.isPrimaryKey);
     const isCompositePK = pkFields.length > 1;
 
+    const registry = createDefaultRegistry();
+    registry.fromSchemaFields(syncedSchema.fields);
+
     for (let i = rangeStart; i < rangeStart + count; i++) {
-      const doc: GeneratedDocument = {
-        id: undefined as any,
-        pkValues: {},
-        data: {},
-      };
+      let doc: GeneratedDocument = { id: undefined as any, pkValues: {}, data: {} };
+      let isValid = false;
+      let attempts = 0;
+      const maxAttempts = 5;
 
-      if (isCompositePK) {
-        const sortedPkFields = [...pkFields].sort(
-          (a, b) =>
-            (a.compositePrimaryKeyIndex ?? 0) -
-            (b.compositePrimaryKeyIndex ?? 0),
-        );
-
-        for (const pkField of sortedPkFields) {
-          if (pkField.isForeignKey) continue;
-          const pkValue = this.generatePKValue(collection.name, pkField, i);
-          doc.data[pkField.name] = pkValue;
-          doc.pkValues![pkField.name] = pkValue;
-        }
-
-        const firstNonFKPK = sortedPkFields.find((f) => !f.isForeignKey);
-        if (firstNonFKPK && doc.data[firstNonFKPK.name] !== undefined) {
-          doc.id = doc.data[firstNonFKPK.name] as string | number;
-        } else {
-          doc.id = this.generateId(collection.name, i);
-        }
-      } else {
-        const docId = this.generateId(collection.name, i);
-        doc.id = docId;
-
-        const pkField = pkFields[0];
-        if (pkField) {
-          doc.data[pkField.name] = docId;
-          doc.pkValues![pkField.name] = docId;
-        }
-        if (!doc.data["id"]) doc.data["id"] = docId;
-      }
-
-      const sortedFields = this.sortFieldsByDependency(syncedSchema.fields);
-
-      for (const field of sortedFields) {
-        if (field.isPrimaryKey) continue;
-        if (field.name === "id" && !field.isPrimaryKey) continue;
-        if (field.type === "reference" || field.isForeignKey) continue;
-
-        const context: FieldGenerationContext = {
-          collectionName: syncedSchema.name,
-          field,
-          documentIndex: i,
-          seed: this.seed,
-          random,
-          generatedIds: new Map(),
-          collectionMap: new Map(),
-          relationships: [],
-          doc,
+      while (!isValid && attempts < maxAttempts) {
+        attempts++;
+        doc = {
+          id: undefined as any,
+          pkValues: {},
+          data: {},
         };
-        doc.data[field.name] = await this.generateFieldValue(context);
-      }
 
-      await this.resolveRelationships(collection.name, i, doc, random);
+        if (isCompositePK) {
+          const sortedPkFields = [...pkFields].sort(
+            (a, b) =>
+              (a.compositePrimaryKeyIndex ?? 0) -
+              (b.compositePrimaryKeyIndex ?? 0),
+          );
+
+          for (const pkField of sortedPkFields) {
+            if (pkField.isForeignKey) continue;
+            const pkValue = this.generatePKValue(collection.name, pkField, i);
+            doc.data[pkField.name] = pkValue;
+            doc.pkValues![pkField.name] = pkValue;
+          }
+
+          const firstNonFKPK = sortedPkFields.find((f) => !f.isForeignKey);
+          if (firstNonFKPK && doc.data[firstNonFKPK.name] !== undefined) {
+            doc.id = doc.data[firstNonFKPK.name] as string | number;
+          } else {
+            doc.id = this.generateId(collection.name, i);
+          }
+        } else {
+          const docId = this.generateId(collection.name, i);
+          doc.id = docId;
+
+          const pkField = pkFields[0];
+          if (pkField) {
+            doc.data[pkField.name] = docId;
+            doc.pkValues![pkField.name] = docId;
+          }
+          if (!doc.data["id"]) doc.data["id"] = docId;
+        }
+
+        const sortedFields = this.sortFieldsByDependency(syncedSchema.fields);
+
+        for (const field of sortedFields) {
+          if (field.isPrimaryKey) continue;
+          if (field.name === "id" && !field.isPrimaryKey) continue;
+          if (field.type === "reference" || field.isForeignKey) continue;
+
+          const context: FieldGenerationContext = {
+            collectionName: syncedSchema.name,
+            field,
+            documentIndex: i,
+            seed: this.seed,
+            random: () => random.next(),
+            generatedIds: new Map(),
+            collectionMap: new Map(),
+            relationships: [],
+            doc,
+          };
+          doc.data[field.name] = await this.generateFieldValue(context);
+        }
+
+        await this.resolveRelationships(collection.name, i, doc, () => random.next());
+
+        const validationResults = registry.validateDocument(doc.data, { random: () => random.next() });
+        if (validationResults.length === 0) {
+          isValid = true;
+        } else if (attempts === maxAttempts) {
+          logger.warn("BaseAdapter", `Failed to generate valid document after ${maxAttempts} attempts for collection ${collection.name}. Violations: ${validationResults.map(v => v.errorMessage).join(", ")}`);
+        }
+      }
 
       yield doc;
     }
@@ -379,25 +416,14 @@ export abstract class BaseAdapter {
         : collectionName;
 
       const seedInput = `${this.seed}_${field.name}_${effectiveIndex}_string`;
-      let hash = 0;
-      for (let i = 0; i < seedInput.length; i++) {
-        hash = (hash << 5) - hash + seedInput.charCodeAt(i);
-        hash |= 0;
-      }
-      this.faker.seed(hash);
-
+      const hash = fnv1a(seedInput);
+      this.prng = new Xoshiro128(hash);
       const fieldName = field.name.toLowerCase();
-      let value: string;
-
-      if (fieldName.includes("country")) {
-        value = this.faker.location.country();
-      } else if (fieldName.includes("code")) {
-        value = this.faker.string.alphanumeric(6).toUpperCase();
-      } else if (fieldName.includes("name")) {
-        value = this.faker.person.fullName();
-      } else {
-        value = this.faker.word.words(2);
-      }
+      let value = fieldInferenceEngine.generate(
+        fieldName,
+        collectionName,
+        () => this.prng.next()
+      );
 
       if (field.constraints?.unique) {
         const suffix = `_${effectiveIndex}`;
@@ -1131,26 +1157,18 @@ export abstract class BaseAdapter {
       ? collectionName.split(".").pop()!
       : collectionName;
     const input = `${normalizedName}_${index}_${this.sessionId}_${this.seed}`;
-    const hash = crypto.createHash("sha256").update(input).digest("hex");
-    return [
-      hash.substring(0, 8),
-      hash.substring(8, 12),
-      hash.substring(12, 16),
-      hash.substring(16, 20),
-      hash.substring(20, 32),
-    ].join("-");
+    return generateFastDeterministicUUID(input);
   }
 
   protected generateObjectIdLike(
     collectionName: string,
     index: number,
   ): string {
-    // CRITICAL: Normalize to simple name for consistent ObjectId generation
     const normalizedName = collectionName.includes(".")
       ? collectionName.split(".").pop()!
       : collectionName;
     const input = `${normalizedName}_${index}_${this.sessionId}_${this.seed}`;
-    const hash = crypto.createHash("sha256").update(input).digest("hex");
+    const hash = generateFastDeterministicUUID(input).replace(/-/g, "");
     return hash.substring(0, 24);
   }
 
@@ -1495,15 +1513,9 @@ export abstract class BaseAdapter {
     const effectiveIndex = documentIndex + startId;
 
     const input = `${seed}_${field.name}_${effectiveIndex}_${suffix}`;
+    const hash = fnv1a(input);
 
-    let hash = 0;
-    for (let i = 0; i < input.length; i++) {
-      hash = (hash << 5) - hash + input.charCodeAt(i);
-      hash |= 0;
-    }
-
-    this.faker = new Faker({ locale: [en] });
-    this.faker.seed(Math.abs(hash));
+    this.prng = new Xoshiro128(hash);
   }
 
   protected generateString(
@@ -1512,30 +1524,11 @@ export abstract class BaseAdapter {
   ): string {
     this.seedFaker(context, "string");
 
-    let value = "";
-    const fieldName = field.name.toLowerCase();
-    const isEmailField = fieldName.includes("email");
-    const isIdField =
-      fieldName === "id" ||
-      fieldName.endsWith("_id") ||
-      fieldName.endsWith("guid") ||
-      fieldName.endsWith("uuid");
-
-    if (isEmailField) {
-      value = this.faker.internet.email().toLowerCase();
-    } else if (isIdField) {
-      value = this.generateUUID(context.collectionName, context.documentIndex);
-    } else if (field.constraints?.enum && field.constraints.enum.length > 0) {
-      value = this.faker.helpers.arrayElement(field.constraints.enum);
-    } else if (field.constraints?.pattern) {
-      try {
-        value = this.faker.helpers.fromRegExp(field.constraints.pattern);
-      } catch {
-        value = this.smartString(field.name, context.collectionName);
-      }
-    } else {
-      value = this.smartString(field.name, context.collectionName);
-    }
+    let value = fieldInferenceEngine.generate(
+      field.name,
+      context.collectionName,
+      () => this.prng.next()
+    );
 
     if (field.constraints?.trim) value = value.trim();
     if (field.constraints?.lowercase) value = value.toLowerCase();
@@ -1546,6 +1539,7 @@ export abstract class BaseAdapter {
       const startId = config?.startId ?? 0;
       const idx = context.documentIndex + startId;
 
+      const isEmailField = field.name.toLowerCase().includes("email");
       if (isEmailField && value.includes("@")) {
         const [local, domain] = value.split("@");
 
@@ -1573,7 +1567,7 @@ export abstract class BaseAdapter {
     const min = field.constraints?.minLength ?? 0;
     if (value.length < min) {
       while (value.length < min) {
-        const additionalWord = this.faker.lorem.word();
+        const additionalWord = "extra";
         value = value + " " + additionalWord;
       }
       if (value.length > min) {
@@ -1590,9 +1584,7 @@ export abstract class BaseAdapter {
   }
 
   protected smartString(fieldName: string, collectionName: string): string {
-    const result = fieldInferenceEngine.getGenerator(fieldName, collectionName);
-    // Pass the seeded faker instance from BaseAdapter to ensure determinism
-    const value = result.generator(this.faker);
+    const value = fieldInferenceEngine.generate(fieldName, collectionName, () => this.prng.next());
     return String(value);
   }
 
@@ -1602,9 +1594,9 @@ export abstract class BaseAdapter {
   ): object {
     this.seedFaker(context, "object");
     return {
-      key: this.faker.lorem.word(),
-      value: this.faker.lorem.sentence(),
-      active: this.faker.datatype.boolean(),
+      key: "key_" + Math.floor(this.prng.next() * 1000),
+      value: SemanticProvider.title(() => this.prng.next()),
+      active: this.prng.next() > 0.5,
     };
   }
 
@@ -1613,17 +1605,17 @@ export abstract class BaseAdapter {
     context: FieldGenerationContext,
   ): unknown[] {
     this.seedFaker(context, "array");
-    const count = this.faker.number.int({ min: 1, max: 5 });
-    const items: unknown[] = [];
+    const count = Math.floor(this.prng.next() * 5) + 1;
+    const items: any[] = [];
     const itemType = field.arrayItemType || "string";
 
     for (let i = 0; i < count; i++) {
-      if (itemType === "string") items.push(this.faker.lorem.word());
-      else if (itemType === "integer")
-        items.push(this.faker.number.int({ min: 0, max: 100 }));
+      if (itemType === "string") items.push("Item " + i);
+      else if (itemType === "integer" || itemType === "number")
+        items.push(Math.floor(this.prng.next() * 100));
       else if (itemType === "boolean")
-        items.push(this.faker.datatype.boolean());
-      else items.push(this.faker.lorem.word());
+        items.push(this.prng.next() > 0.5);
+      else items.push("Item " + i);
     }
 
     return items;
@@ -1635,14 +1627,14 @@ export abstract class BaseAdapter {
   } {
     this.seedFaker(context, "geo");
     return {
-      lat: this.faker.location.latitude(),
-      lng: this.faker.location.longitude(),
+      lat: (this.prng.next() * 180) - 90,
+      lng: (this.prng.next() * 360) - 180,
     };
   }
 
   protected generateBinary(context: FieldGenerationContext): string {
     this.seedFaker(context, "binary");
-    return this.faker.string.hexadecimal({ length: 16 });
+    return Math.floor(this.prng.next() * 1e16).toString(16);
   }
 
   protected generateInteger(
@@ -1659,7 +1651,14 @@ export abstract class BaseAdapter {
 
     const min = Number(field.constraints?.min) || 0;
     const max = Number(field.constraints?.max) || 10000;
-    let val = this.faker.number.int({ min, max });
+    
+    let val: number;
+    const inference = fieldInferenceEngine.getGenerator(field.name, context.collectionName);
+    if (!inference.meta.isFallback) {
+      val = Number(inference.generator(() => this.prng.next(), { fieldName: field.name, collectionName: context.collectionName }));
+    } else {
+      val = Math.floor(this.prng.next() * (max - min + 1)) + min;
+    }
 
     val = this.applyCrossColumnConstraints(val, field, context) as number;
     return Math.round(val);
@@ -1672,7 +1671,14 @@ export abstract class BaseAdapter {
     this.seedFaker(context, "number");
     const min = Number(field.constraints?.min) || 0;
     const max = Number(field.constraints?.max) || 10000;
-    let val = this.faker.number.float({ min, max });
+
+    let val: number;
+    const inference = fieldInferenceEngine.getGenerator(field.name, context.collectionName);
+    if (!inference.meta.isFallback) {
+      val = Number(inference.generator(() => this.prng.next(), { fieldName: field.name, collectionName: context.collectionName }));
+    } else {
+      val = (this.prng.next() * (max - min)) + min;
+    }
 
     val = this.applyCrossColumnConstraints(val, field, context) as number;
     return val;

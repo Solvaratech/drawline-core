@@ -38,130 +38,56 @@ Generate documents $D_c = \{d_1, d_2, ..., d_k\}$ for each collection $c$ such t
 
 ## Features Achieved
 
-### Multi-Database Adapter Architecture
+### 🎨 Drawline Semantic Engine (NEW v0.2.0)
 
+Drawline now includes a world-class **Drawline Semantic Engine** powered by **60+ curated industry datasets**. No more "Lorem Ipsum" or generic faker data; your test databases will now contain high-fidelity, domain-specific information.
+
+- **60+ Industry Domains**: Finance, Healthcare, Aviation, Logistics, Law, Science, Tech, and more.
+- **Context-Aware Inference**: The engine automatically detects field names like `pan_card` (Indian context), `flight_number` (Aviation), or `diagnosis_code` (Healthcare) and routes them to the correct semantic generator.
+- **Zero-Dependency Core**: High-performance generation without bloated external libraries.
+- **Deterministic Randomness**: Uses Xoshiro128 PRNG for repeatable, seed-based data generation across all 60+ datasets.
+
+### 🏢 Industry Templates
+Drawline provides ready-to-use schema templates for various sectors:
+- **Ecommerce**: Multi-table setup with users, products, orders, and logistics tracking.
+- **OTT Streaming**: Profiles, movie titles, genres, and watch history.
+- **Fintech**: Transactions, bank details, and financial tax types.
+- **Logistics**: Carriers, shipments, and global tracking states.
+- **Healthcare**: Appointments, vitals, and medical specialties.
+- ...and 6 more industry presets.
+
+### 🛡️ Unified Validation CLI
+A single entry point for all project health checks:
+- **Dataset Integrity**: Automatically validates all 60+ JSON semantic collections.
+- **Performance Benchmarking**: Non-interactive suite that measures **TPS (Transactions Per Second)** and latency.
+- **Unit Testing**: Full integration with Vitest for 100% core logic verification.
+
+### Multi-Database Adapter Architecture
 Drawline implements a unified adapter pattern supporting **11+ database systems**:
 
 | Adapter | Status | Key Features |
 |---------|--------|-------------|
-| PostgreSQL | ✅ Complete | Schema inference, FK constraints, serial types, composite PKs |
-| MySQL | ✅ Complete | AUTO_INCREMENT, foreign keys, composite PKs |
-| SQLite | ✅ Complete | Embedded testing, full FK support |
+| PostgreSQL | ✅ Complete | Schema inference, FK constraints, serial types |
+| MySQL | ✅ Complete | AUTO_INCREMENT, foreign keys |
+| SQLite | ✅ Complete | Embedded testing, local file support |
 | MongoDB | ✅ Complete | ObjectId generation, document embedding |
-| DynamoDB | ✅ Complete | Partition keys, sort keys, GSI support |
-| Firestore | ✅ Complete | Collection groups, subcollections |
-| Redis | ✅ Complete | Key-value, sets, sorted sets |
-| SQL Server | ✅ Complete | Identity columns, stored procedures |
-| InMemory | ✅ Complete | Mock adapter for testing |
-| Ephemeral | ✅ Complete | Transient data for demos |
-| Null | ✅ Complete | No-op adapter |
-| CSV Export | ✅ Complete | Export to CSV files |
-
-### Schema System
-
-- **SchemaCollection**: Represents tables/collections with fields, constraints, and metadata
-- **SchemaField**: Supports 20+ field types including composite keys
-- **SchemaRelationship**: One-to-one, one-to-many, many-to-many with composite FK support
-- **FieldConstraints**: min, max, minLength, maxLength, pattern, enum, unique, nullPercentage
+| CSV Export | ✅ Complete | **Automated Export** alongside test reports |
+| ...and more | | DynamoDB, Firestore, Redis, SQL Server |
 
 ### Field Inference Engine
-
-Smart field generation based on semantic naming:
-
+Smart field generation with score-based routing:
 ```typescript
-// Score-based inference system
-const rules = [
-  { tokens: ['email'], score: 10, generator: f => f.internet.email() },
-  { tokens: ['first', 'name'], score: 8, generator: f => f.person.firstName() },
-  { tokens: ['created', 'at'], score: 10, generator: f => f.date.past().toISOString() },
-  // ... 80+ rules implemented
-];
+// Automatic Industry Routing
+this.addRule('flight_status', ['flight', 'status'], 10, (r) => SemanticProvider.getFlightStatus(r));
+this.addRule('diagnosis', ['diagnosis'], 10, (r) => SemanticProvider.getHealthcareDiagnosis(r));
 ```
 
-Supports:
-- Tokenization (camelCase, snake_case, PascalCase)
-- Negative token filtering
-- Score-based best-match selection
-- Perfect-match bonuses
-- Caching for performance
+### CI/CD Integration
+- **Automated Benchmarking**: Measures TPS and Memory usage on every PR.
+- **Artifact Upload**: Generates and uploads PDF/Markdown reports and sample CSV data for every CI run.
+- **Version Gating**: Ensures `npm publish` only occurs if all 60+ datasets are valid and benchmarks are stable.
 
-### Dependency Graph Engine
-
-Mathematically sound topological sorting:
-
-- **Strong vs Weak Dependencies**: Distinguishes required vs optional FKs
-- **Cycle Detection**: DFS-based cycle detection with Tarjan's algorithm principles
-- **Cycle Breaking**: Intelligent break-point selection prioritizing weak deps
-- **Level Assignment**: BFS-based level propagation for parallel execution
-
-### Constraint Engine
-
-Cross-column dependency resolution:
-
-- **ColumnDependencyGraph**: Topological sort of field dependencies
-- **Binary Constraints**: minColumn, maxColumn, gtColumn, ltColumn
-- **Temporal Constraints**: startDate, endDate for timestamps
-- **Numeric Constraints**: min, max with automatic range adjustment
-- **String Constraints**: minLength, maxLength, pattern, trim, case
-
-### Deterministic ID Generation
-
-Math-based ID generation eliminating database lookups:
-
-```
-ID(collection, index) = H(collection + index + sessionId + seed)
-
-where H is SHA-256 truncated to specific format:
-- UUID: 8-4-4-4-12 hex format
-- ObjectId: 24-char hex string  
-- Integer: index + startId + 1
-```
-
-This guarantees: $\forall c \in C, \forall i \in [1, n]: ID_c(i) = ID_{parent(c)}(i \mod |parent(c)|)$
-
-### Composite Key Support
-
-- **Composite Primary Keys**: Up to N fields per PK
-- **Composite Foreign Keys**: Multi-column FK references
-- **FK Chaining**: Resolves nested FK chains (A→B→C)
-- **Cached Resolution**: Parent row caching for performance
-
-### ORM Code Generation
-
-Generates type-safe ORM code from schema:
-
-| ORM | Status | Output |
-|-----|--------|--------|
-| Prisma | ✅ Complete | schema.prisma |
-| TypeORM | ✅ Complete | entities/*.ts |
-| Drizzle | ✅ Complete | schema.ts |
-| Mongoose | ✅ Complete | schemas/*.ts |
-
-### Schema Diff Engine
-
-- **Full Sync Mode**: Destructive schema changes allowed
-- **Additive Mode**: Safe migrations only
-- **DDL Generation**: CREATE TABLE, ALTER TABLE, DROP TABLE
-- **Type Migration**: Type widening detection
-- **Foreign Key Resolution**: Constraint ordering
-
-### CLI Tool
-
-```
-drawline init                    # Initialize project
-drawline gen --schema --config   # Generate data
-drawline validate               # Validate schema
-drawline diff                   # Show schema changes
-```
-
-### Worker Pool
-
-Parallel generation for large datasets:
-
-- **Worker Threads**: Native Node.js worker_threads
-- **Sharding**: Deterministic range-based sharding
-- **Progress Callbacks**: Real-time progress reporting
-- **Task Queue**: FIFO scheduling with backpressure
+---
 
 ---
 

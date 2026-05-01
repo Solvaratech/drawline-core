@@ -29,11 +29,35 @@ jobs:
     - name: Check types
       run: npm run type-check
 
-    - name: Run tests with coverage
-      run: npm run test:ci
+    - name: Run Full Validation Suite (Tests + Benchmarks)
+      run: npm test -- --ci
+
+    - name: Upload Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: results-node-${{ matrix.node-version }}
+        path: |
+          test-results/
+          coverage/
 
     - name: Build Core
       run: npm run build
 
-    - name: Build CLI
-      run: npm run cli:build
+  publish:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Core
+        run: npm run build
+      - name: Publish to NPM
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

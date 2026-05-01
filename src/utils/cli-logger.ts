@@ -13,4 +13,9 @@ export const cliLogger = {
 		console.log("\n" + chalk.cyan.bold("=== " + msg + " ==="));
 	},
 	step: (msg: string) => console.log(chalk.magenta("→ ") + msg),
+
+	// Formatting only (returns string, doesn't log)
+	formatInfo: (msg: string) => chalk.blue("ℹ ") + msg,
+	formatSuccess: (msg: string) => chalk.green("✔ ") + msg,
+	formatStep: (msg: string) => chalk.magenta("→ ") + msg,
 };

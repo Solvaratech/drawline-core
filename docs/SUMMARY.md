@@ -1,0 +1,18 @@
+# Table of contents
+
+* [Introduction](introduction.md)
+* [Core Engine](core-engine/README.md)
+  * [Drawline Semantic Engine](core-engine/semantic-engine.md)
+  * [Field Inference Engine](core-engine/inference-engine.md)
+  * [Deterministic ID Generation](core-engine/deterministic-ids.md)
+* [CLI & Tooling](cli/README.md)
+  * [Unified Test Dispatcher](cli/unified-test-cli.md)
+  * [Interactive Benchmark Runner](cli/benchmark-runner.md)
+* [Datasets Catalog](datasets/catalog.md)
+* [API Reference](api/README.md)
+  * [SemanticProvider](api/semantic-provider.md)
+  * [TestDataGeneratorService](api/generator-service.md)
+  * [Adapters](api/adapters.md)
+* [CI/CD & DevOps](ci-cd/README.md)
+  * [Validation Pipeline](ci-cd/validation-pipeline.md)
+  * [Automated Publishing](ci-cd/automated-publishing.md)

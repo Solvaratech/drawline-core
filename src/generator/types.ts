@@ -147,7 +147,6 @@ export interface RelationshipMap {
 	byId: Map<string, SchemaRelationship>; // Relationship ID -> relationship
 }
 
-// TODO - some of these are not in use, need to check and rmeove
 export type IdMetadata = {
 	type: "deterministic";
 	count: number;

@@ -1,0 +1,3 @@
+[
+  "Pending", "Processing", "Confirmed", "Shipped", "Out for Delivery", "Delivered", "Cancelled", "Returned", "Refunded", "On Hold", "Failed", "Awaiting Payment"
+]

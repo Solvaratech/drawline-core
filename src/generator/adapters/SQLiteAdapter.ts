@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { BaseAdapter, CollectionDetails } from './BaseAdapter';
 import type { SchemaField } from '../../types/schemaDesign';
+import type { GeneratedDocument } from '../types';
 
 export class SQLiteAdapter extends BaseAdapter {
   private db: Database.Database | null = null;
@@ -57,7 +58,7 @@ export class SQLiteAdapter extends BaseAdapter {
 
   async insertDocuments(
     collectionName: string,
-    documents: Record<string, any>[],
+    documents: GeneratedDocument[],
     batchSize?: number,
     allowedReferenceFields?: Set<string>,
     schema?: SchemaField[],
@@ -69,18 +70,24 @@ export class SQLiteAdapter extends BaseAdapter {
     }
 
     const escapedCollection = this.escapeIdentifier(collectionName);
-    const keys = Object.keys(documents[0]);
+    // Use data keys for columns
+    const keys = Object.keys(documents[0].data);
     const columns = keys.map(this.escapeIdentifier).join(", ");
     const placeholders = keys.map(() => "?").join(", ");
     
     // Use a transaction for bulk inserts ensuring speed & safety
-    const insertMany = this.db.transaction((docs: Record<string, any>[]) => {
+    const insertMany = this.db.transaction((docs: GeneratedDocument[]) => {
       const stmt = this.db!.prepare(`INSERT INTO ${escapedCollection} (${columns}) VALUES (${placeholders})`);
       const ids: (string | number)[] = [];
       for (const doc of docs) {
-        const values = keys.map(k => doc[k]);
+        const values = keys.map(k => {
+          const val = doc.data[k];
+          if (val instanceof Date) return val.toISOString();
+          if (typeof val === 'object' && val !== null) return JSON.stringify(val);
+          return val;
+        });
         const info = stmt.run(values);
-        ids.push(Number(info.lastInsertRowid));
+        ids.push(doc.id || Number(info.lastInsertRowid));
       }
       return ids;
     });
@@ -89,6 +96,81 @@ export class SQLiteAdapter extends BaseAdapter {
       return insertMany(documents);
     } catch (error: any) {
       throw new Error(`Failed to insert documents: ${error.message}`);
+    }
+  }
+
+  /**
+   * Stateful Mocking: Retrieve documents with optional filtering
+   */
+  getDocuments(collectionName: string, query: Record<string, any> = {}): GeneratedDocument[] {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    
+    const escapedCollection = this.escapeIdentifier(collectionName);
+    let sql = `SELECT * FROM ${escapedCollection}`;
+    const params: any[] = [];
+    
+    const queryKeys = Object.keys(query).filter(k => query[k] !== undefined);
+    if (queryKeys.length > 0) {
+      const whereClauses = queryKeys.map(k => `${this.escapeIdentifier(k)} = ?`);
+      sql += ` WHERE ${whereClauses.join(" AND ")}`;
+      queryKeys.forEach(k => params.push(query[k]));
+    }
+    
+    try {
+      const stmt = this.db.prepare(sql);
+      const rows = stmt.all(params) as Record<string, any>[];
+      
+      return rows.map(row => ({
+        id: row.id || 0, // Fallback if no id column
+        data: row
+      }));
+    } catch (error) {
+      console.error(`[SQLiteAdapter] getDocuments error for ${collectionName}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Stateful Mocking: Delete a document by ID
+   */
+  deleteDocument(collectionName: string, id: string | number, schema?: SchemaField[]): boolean {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    
+    const escapedCollection = this.escapeIdentifier(collectionName);
+    const pkField = schema?.find(f => f.isPrimaryKey)?.name || 'id';
+    
+    try {
+      const stmt = this.db.prepare(`DELETE FROM ${escapedCollection} WHERE ${this.escapeIdentifier(pkField)} = ?`);
+      const info = stmt.run(id);
+      return info.changes > 0;
+    } catch (error) {
+      console.error(`[SQLiteAdapter] deleteDocument error:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Stateful Mocking: Update a document by ID
+   */
+  updateDocument(collectionName: string, id: string | number, updates: Record<string, any>, schema?: SchemaField[]): boolean {
+    if (!this.db) throw new Error("Not connected to SQLite");
+    
+    const escapedCollection = this.escapeIdentifier(collectionName);
+    const pkField = schema?.find(f => f.isPrimaryKey)?.name || 'id';
+    
+    const updateKeys = Object.keys(updates);
+    if (updateKeys.length === 0) return true;
+    
+    const setClause = updateKeys.map(k => `${this.escapeIdentifier(k)} = ?`).join(", ");
+    const params = [...updateKeys.map(k => updates[k]), id];
+    
+    try {
+      const stmt = this.db.prepare(`UPDATE ${escapedCollection} SET ${setClause} WHERE ${this.escapeIdentifier(pkField)} = ?`);
+      const info = stmt.run(params);
+      return info.changes > 0;
+    } catch (error) {
+      console.error(`[SQLiteAdapter] updateDocument error:`, error);
+      return false;
     }
   }
 

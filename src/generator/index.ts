@@ -22,6 +22,7 @@ export { DynamoDBAdapter } from "./adapters/DynamoDBAdapter";
 export { SQLServerAdapter } from "./adapters/SQLServerAdapter";
 export { RedisAdapter } from "./adapters/RedisAdapter";
 export { DependencyGraph } from "./core/DependencyGraph";
+export * from "./workers/WorkerPool";
 import { ConstraintRegistry } from "./core/constraints/ConstraintRegistry";
 import { logger } from "../utils";
 import type {
