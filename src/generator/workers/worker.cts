@@ -1,7 +1,7 @@
 import { parentPort } from "worker_threads";
-import { TestDataGeneratorService } from "./index";
-import { decryptCredentials } from "../connections";
-import { DatabaseType } from "../types/schemaDesign";
+import { TestDataGeneratorService } from "../index";
+import { decryptCredentials } from "../../connections";
+import { DatabaseType } from "../../types/schemaDesign";
 
 console.log("[Worker] STARTING execution...");
 
@@ -92,7 +92,7 @@ if (ipcChannel && typeof ipcChannel.on === 'function') {
 			try {
 				// Use the CSVExportAdapter directly
 				// Dynamic import to avoid circular dep issues potential or just require
-				const { CSVExportAdapter } = await import("./adapters/CSVExportAdapter");
+				const { CSVExportAdapter } = await import("../adapters/CSVExportAdapter");
 
 				const adapter = new CSVExportAdapter(tempDir);
 				const service = new TestDataGeneratorService(adapter);
