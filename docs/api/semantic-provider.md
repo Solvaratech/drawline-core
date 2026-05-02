@@ -1,35 +1,53 @@
-# SemanticProvider API
+# SemanticProvider
 
-The `SemanticProvider` is the primary interface for accessing the **Semantic Engine**. It contains static methods for generating high-fidelity strings.
+`SemanticProvider` is the data generation engine that provides high-quality, realistic values. It uses a curated JSON corpus and a seeded PRNG to ensure variety and determinism.
 
-## Methods
+## Key Methods
 
-### `fullName(random: () => number, context?: InferenceContext)`
-Generates a realistic full name. Automatically switches between Indian and Global naming conventions based on the context.
+All methods take a `random: () => number` function (the seeded PRNG) as their first argument.
 
-### `email(random: () => number, name?: string)`
-Generates a professional email address. If a `name` is provided, it uses it for the mailbox portion.
+### Personal Information
+- `fullName(random, context?)`: Generates a full name. Context can trigger locale-specific names (e.g., Indian).
+- `email(random, name?)`: Generates a realistic email. If a name is provided, the email is derived from it.
 
-### `title(random: () => number, context?: string)`
-Generates a context-aware title.
-- **Movies**: Uses `media_movie_titles.json`.
-- **Posts/Articles**: Generates catchphrases like "10 Tips for Better Technology".
-- **Products**: Uses `ecommerce_product_names.json`.
+### Business & Industry
+- `company(random)`: Generates realistic company names.
+- `getJobTitle(random)`: Returns professional designations (e.g., "Senior Software Engineer").
+- `getDepartment(random)`: Returns corporate departments (e.g., "Engineering", "Sales").
 
-### `getGenre(random: () => number)`
-Returns a random media genre from `media_genres.json`.
+### Geography & Logistics
+- `city(random)`: Generates global city names.
+- `getAddress(random)`: Returns realistic street addresses.
+- `getCountry(random)`: Returns country names.
+- `getState(random, context?)`: Returns states/provinces (supports Indian and US contexts).
+- `getLogisticsCarrier(random)`: Returns names like FedEx, DHL, etc.
 
-### `getYear(random: () => number, start?: number, end?: number)`
-Generates a year within the specified range (default 1970–2024).
+### Financial
+- `getBank(random, context?)`: Returns bank names (supports Indian banks).
+- `getCurrency(random)`: Returns ISO currency codes (USD, INR, etc.).
+- `getPaymentMethod(random)`: Returns "Credit Card", "UPI", "PayPal", etc.
 
-### `getAadhaar(random: () => number)`
-Generates a valid-looking 12-digit Indian Aadhaar number in `XXXX XXXX XXXX` format.
+### Technology
+- `getProgrammingLanguage(random)`: Returns languages like "JavaScript", "Python", "Go".
+- `getCloudProvider(random)`: Returns "AWS", "Azure", "GCP".
+- `getDatabase(random)`: Returns "PostgreSQL", "MongoDB", etc.
 
-### `getPAN(random: () => number)`
-Generates a valid-looking Indian PAN card number.
+### Media & Content
+- `title(random, context?)`: Generates realistic titles for movies, blog posts, or products based on context.
+- `content(random, length?)`: Generates multiple sentences of realistic text. Length can be `short`, `medium`, or `long`.
+- `getGenre(random)`: Returns media genres (Action, Sci-Fi, etc.).
 
-### Domain-Specific Getters
-The provider includes 40+ methods like `getFlightStatus()`, `getTaxType()`, `getCaseStatus()`, etc., each mapped to their respective JSON dataset.
+## Contextual Logic
+
+Many methods accept a `context` object:
+```typescript
+interface SemanticContext {
+  collectionName?: string;
+  fieldName?: string;
+}
+```
+
+If the context contains keywords like **"india"**, the engine will automatically switch to Indian datasets for names, states, banks, and identity types (PAN, Aadhaar).
 
 ## Usage Example
 
