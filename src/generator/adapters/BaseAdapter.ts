@@ -476,6 +476,13 @@ export abstract class BaseAdapter {
       return field.defaultValue;
     }
 
+    // Top-level enum guard: applies to any field type that declares allowed values
+    const topLevelEnum = field.constraints?.enum;
+    if (topLevelEnum && topLevelEnum.length > 0) {
+      const idx = Math.floor(random() * topLevelEnum.length);
+      return topLevelEnum[idx];
+    }
+
     switch (field.type) {
       case "string":
         return this.generateString(field, context);
@@ -1524,11 +1531,47 @@ export abstract class BaseAdapter {
   ): string {
     this.seedFaker(context, "string");
 
+    // 1. Honour explicit enum/options constraints first
+    const enumValues = field.constraints?.enum;
+    if (enumValues && enumValues.length > 0) {
+      const idx = Math.floor(this.prng.next() * enumValues.length);
+      return enumValues[idx];
+    }
+
     let value = fieldInferenceEngine.generate(
       field.name,
       context.collectionName,
       () => this.prng.next()
     );
+
+    // 2. Temporal coherence for string-typed timestamp fields
+    //    (updated_at / modified_at should be >= created_at / createdAt)
+    const lowerName = field.name.toLowerCase();
+    const isUpdateTimestamp =
+      lowerName === "updated_at" ||
+      lowerName === "updatedat" ||
+      lowerName === "modified_at" ||
+      lowerName === "modifiedat" ||
+      lowerName === "last_modified" ||
+      lowerName === "lastmodified";
+
+    if (isUpdateTimestamp) {
+      const rawCreated =
+        context.doc?.data?.["createdAt"] ??
+        context.doc?.data?.["created_at"] ??
+        context.doc?.data?.["insertedAt"] ??
+        context.doc?.data?.["inserted_at"];
+
+      if (rawCreated !== undefined && rawCreated !== null) {
+        const createdMs = new Date(rawCreated as string | number | Date).getTime();
+        if (!isNaN(createdMs)) {
+          // Pick a random time between createdAt and createdAt + 10 days
+          const maxOffset = 10 * 24 * 60 * 60 * 1000;
+          const offset = Math.floor(this.prng.next() * maxOffset);
+          value = new Date(createdMs + offset).toISOString();
+        }
+      }
+    }
 
     if (field.constraints?.trim) value = value.trim();
     if (field.constraints?.lowercase) value = value.toLowerCase();
@@ -1593,10 +1636,49 @@ export abstract class BaseAdapter {
     context: FieldGenerationContext,
   ): object {
     this.seedFaker(context, "object");
+    const r = () => this.prng.next();
+
+    // If the field has a defined sub-schema, generate each sub-field
+    if (field.objectFields && field.objectFields.length > 0) {
+      const obj: Record<string, unknown> = {};
+      for (const subField of field.objectFields) {
+        const subContext: FieldGenerationContext = { ...context, field: subField };
+        switch (subField.type) {
+          case "string":
+            obj[subField.name] = this.generateString(subField, subContext);
+            break;
+          case "integer":
+          case "long":
+            obj[subField.name] = this.generateInteger(subField, subContext);
+            break;
+          case "number":
+          case "float":
+          case "decimal":
+            obj[subField.name] = this.generateNumber(subField, subContext);
+            break;
+          case "boolean":
+            obj[subField.name] = r() > 0.5;
+            break;
+          case "date":
+          case "timestamp":
+          case "timestamptz":
+            obj[subField.name] = this.generateDate(subField, subContext).toISOString();
+            break;
+          case "uuid":
+            obj[subField.name] = this.generateUUID(context.collectionName, context.documentIndex);
+            break;
+          default:
+            obj[subField.name] = this.generateString(subField, subContext);
+        }
+      }
+      return obj;
+    }
+
+    // Smart fallback: derive a meaningful shape from the field name
     return {
-      key: "key_" + Math.floor(this.prng.next() * 1000),
-      value: SemanticProvider.title(() => this.prng.next()),
-      active: this.prng.next() > 0.5,
+      id: this.generateObjectIdLike(context.collectionName, context.documentIndex),
+      value: String(fieldInferenceEngine.generate(field.name, context.collectionName, r)),
+      createdAt: new Date(Date.now() - Math.floor(r() * 365 * 24 * 60 * 60 * 1000)).toISOString(),
     };
   }
 
@@ -1605,17 +1687,38 @@ export abstract class BaseAdapter {
     context: FieldGenerationContext,
   ): unknown[] {
     this.seedFaker(context, "array");
-    const count = Math.floor(this.prng.next() * 5) + 1;
-    const items: any[] = [];
+    const minItems = field.constraints?.minItems ?? 1;
+    const maxItems = field.constraints?.maxItems ?? 5;
+    const count = Math.floor(this.prng.next() * (maxItems - minItems + 1)) + minItems;
+    const items: unknown[] = [];
     const itemType = field.arrayItemType || "string";
+    const r = () => this.prng.next();
+
+    // Derive a singular form for per-item inference (tags → tag, categories → category)
+    const singularName = field.name
+      .replace(/ies$/, "y")
+      .replace(/([^s])s$/, "$1");
 
     for (let i = 0; i < count; i++) {
-      if (itemType === "string") items.push("Item " + i);
-      else if (itemType === "integer" || itemType === "number")
-        items.push(Math.floor(this.prng.next() * 100));
-      else if (itemType === "boolean")
-        items.push(this.prng.next() > 0.5);
-      else items.push("Item " + i);
+      switch (itemType) {
+        case "string":
+          items.push(String(fieldInferenceEngine.generate(singularName, context.collectionName, r)));
+          break;
+        case "integer":
+        case "long":
+          items.push(Math.floor(r() * 100));
+          break;
+        case "number":
+        case "float":
+        case "decimal":
+          items.push(Math.round(r() * 1000) / 10);
+          break;
+        case "boolean":
+          items.push(r() > 0.5);
+          break;
+        default:
+          items.push(String(fieldInferenceEngine.generate(singularName, context.collectionName, r)));
+      }
     }
 
     return items;

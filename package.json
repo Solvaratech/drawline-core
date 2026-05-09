@@ -3,9 +3,15 @@
 	"version": "0.2.1",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"bin": {
+		"drawline-mcp": "./dist/mcp/server.js"
+	},
 	"scripts": {
 		"build": "tsc",
 		"type-check": "tsc --noEmit",
+		"datasets": "node scripts/build-datasets.mjs",
+		"mcp": "node dist/mcp/server.js",
+		"mcp:dev": "tsx src/mcp/server.ts",
 		"test": "tsx scripts/test-dispatcher.ts",
 		"test:ci": "npm test -- --ci",
 		"test:watch": "vitest",
@@ -14,6 +20,7 @@
 	"dependencies": {
 		"@aws-sdk/client-dynamodb": "^3.954.0",
 		"@aws-sdk/lib-dynamodb": "^3.954.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"better-sqlite3": "^12.6.2",
 		"chalk": "^5.6.2",
 		"commander": "^14.0.3",
